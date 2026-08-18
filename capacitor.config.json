@@ -1,0 +1,5 @@
+{
+  "appId": "com.budgetapp.local",
+  "appName": "Бюджет",
+  "webDir": "dist"
+}
