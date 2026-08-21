@@ -5,7 +5,15 @@ import {
   MoreHorizontal, Trash2, Landmark, ArrowUpRight, ArrowDownRight,
   List, Gauge, BarChart3, Pencil, Settings, PiggyBank, Check, ShoppingCart, ChevronDown,
   Coffee, Plane, Dumbbell, Fuel, Phone, Music, Book, PawPrint, GraduationCap, Wrench, Tag,
-  Calendar, ChevronLeft, ChevronRight, NotebookPen, Percent, Menu, Repeat, PencilLine, Power
+  Calendar, ChevronLeft, ChevronRight, NotebookPen, Percent, Menu, Repeat, PencilLine, Power,
+  StickyNote, CheckSquare, Star, Image as ImageIcon,
+  Pizza, Beer, Wine, Cake, Bus, Train, Bike, Ship,
+  Lightbulb, Droplet, Flame, Wifi, Tv, Sofa, Bed,
+  ShoppingBasket, Shirt, Watch, Glasses,
+  Stethoscope, Pill, Syringe, Activity,
+  Laptop, Smartphone, Headphones, Camera, Gamepad2, Banknote,
+  Baby, Dog, Cat, Users,
+  Palette, Scissors, Umbrella, TreePine, Building2, MapPin, Flag, Clock
 } from 'lucide-react';
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -13,7 +21,7 @@ import {
 } from 'recharts';
 import { Browser } from '@capacitor/browser';
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 const UPDATE_REPO = 'kutlugildinartem-dotcom/kazna-budget-app';
 
 function isVersionNewer(latest, current) {
@@ -148,6 +156,16 @@ const ICON_MAP = {
   briefcase: Briefcase, gift: Gift, landmark: Landmark, coffee: Coffee, plane: Plane, dumbbell: Dumbbell,
   fuel: Fuel, phone: Phone, music: Music, book: Book, paw: PawPrint, grad: GraduationCap, wrench: Wrench,
   tag: Tag, target: Target, cart: ShoppingCart, other: MoreHorizontal,
+  pizza: Pizza, beer: Beer, wine: Wine, cake: Cake,
+  bus: Bus, train: Train, bike: Bike, ship: Ship,
+  bulb: Lightbulb, water: Droplet, flame: Flame, wifi: Wifi, tv: Tv, sofa: Sofa, bed: Bed,
+  basket: ShoppingBasket, shirt: Shirt, watch: Watch, glasses: Glasses,
+  stethoscope: Stethoscope, pill: Pill, syringe: Syringe, activity: Activity,
+  laptop: Laptop, smartphone: Smartphone, headphones: Headphones, camera: Camera, gamepad: Gamepad2,
+  cash: Banknote,
+  baby: Baby, dog: Dog, cat: Cat, users: Users,
+  palette: Palette, scissors: Scissors, umbrella: Umbrella, tree: TreePine, building: Building2,
+  pin: MapPin, flag: Flag, clock: Clock, star: Star, note: StickyNote,
 };
 const ICON_OPTIONS = Object.entries(ICON_MAP).map(([key, icon]) => ({ key, icon }));
 const CATEGORY_PALETTE = ['#fb7185', '#fbbf24', '#a78bfa', '#f472b6', '#34d399', '#38bdf8', '#60a5fa', '#22d3ee'];
@@ -169,6 +187,48 @@ const compactNum = (n) => {
   if (abs >= 1000) return sign + (abs / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
   return String(Math.round(n));
 };
+
+function readAndCompressImage(file, maxDim = 320) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = reject;
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) { height = Math.round(height * maxDim / width); width = maxDim; }
+          else { width = Math.round(width * maxDim / height); height = maxDim; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.82));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function stripHtml(html) {
+  if (!html) return '';
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  return tmp.textContent || '';
+}
+
+function formatNoteDate(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const now = new Date();
+  const time = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  if (d.toDateString() === now.toDateString()) return `Сегодня, ${time}`;
+  const yest = new Date(now); yest.setDate(now.getDate() - 1);
+  if (d.toDateString() === yest.toDateString()) return `Вчера, ${time}`;
+  return `${d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}, ${time}`;
+}
 
 function daysInMonth(year, monthIdx) {
   return new Date(year, monthIdx + 1, 0).getDate();
@@ -207,6 +267,7 @@ const MENU_ITEMS = [
   { id: 'shopping', label: 'Список покупок', icon: NotebookPen, color: '#22d3ee' },
   { id: 'recurring', label: 'Регулярные платежи', icon: Repeat, color: '#fbbf24' },
   { id: 'categoryManage', label: 'Категории', icon: Tag, color: '#a78bfa' },
+  { id: 'notes', label: 'Заметки', icon: StickyNote, color: '#34d399' },
 ];
 
 const ALL_NAV_SECTIONS = [
@@ -249,6 +310,7 @@ function getFontStyle() {
   .tap-scale { transition: transform 0.15s cubic-bezier(.34,1.56,.64,1), opacity 0.15s ease, box-shadow 0.2s ease; }
   .tap-scale:active { transform: scale(0.92); opacity: 0.92; }
   * { -webkit-tap-highlight-color: transparent; }
+  [contenteditable]:empty:before { content: attr(data-placeholder); color: ${THEME.mutedDim}; pointer-events: none; }
 `;
 }
 
@@ -317,12 +379,14 @@ export default function BudgetApp() {
   const [customCategories, setCustomCategories] = useState([]);
   const [shoppingItems, setShoppingItems] = useState([]);
   const [recurringPayments, setRecurringPayments] = useState([]);
+  const [notes, setNotes] = useState([]);
   const [currency, setCurrency] = useState('₽');
   const [accentId, setAccentId] = useState('blue');
   const [barItemIds, setBarItemIds] = useState(DEFAULT_BAR_IDS);
   const [homeSections, setHomeSections] = useState({ goals: true, transactions: true });
   const [editTxId, setEditTxId] = useState(null);
   const [editAccountId, setEditAccountId] = useState(null);
+  const [editGoalId, setEditGoalId] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [saveError, setSaveError] = useState(false);
   const [updateInfo, setUpdateInfo] = useState(null);
@@ -364,6 +428,7 @@ export default function BudgetApp() {
           setCustomCategories(parsed.customCategories || []);
           setShoppingItems(parsed.shoppingItems || []);
           setRecurringPayments(parsed.recurringPayments || []);
+          setNotes(parsed.notes || []);
           setCurrency(parsed.currency ?? '₽');
           setAccentId(parsed.accentId || 'blue');
           if (parsed.barItemIds) {
@@ -394,13 +459,13 @@ export default function BudgetApp() {
     (async () => {
       try {
         const res = await storageSet(STORAGE_KEY, JSON.stringify({
-          accounts, transactions, goals, limits, customCategories, shoppingItems, recurringPayments,
+          accounts, transactions, goals, limits, customCategories, shoppingItems, recurringPayments, notes,
           currency, accentId, barItemIds, homeSections,
         }));
         setSaveError(!res);
       } catch (e) { setSaveError(true); }
     })();
-  }, [accounts, transactions, goals, limits, customCategories, shoppingItems, recurringPayments, currency, accentId, barItemIds, homeSections, loaded]);
+  }, [accounts, transactions, goals, limits, customCategories, shoppingItems, recurringPayments, notes, currency, accentId, barItemIds, homeSections, loaded]);
 
   useEffect(() => {
     const prev = prevGoalsRef.current;
@@ -460,7 +525,7 @@ export default function BudgetApp() {
   const monthKey = todayISO().slice(0, 7);
 
   const resolvedCustomCategories = useMemo(() => customCategories.map(c => ({
-    id: c.id, label: c.label, type: c.type, color: c.color, icon: ICON_MAP[c.iconKey] || Tag,
+    id: c.id, label: c.label, type: c.type, color: c.color, icon: ICON_MAP[c.iconKey] || Tag, description: c.description || '',
   })), [customCategories]);
   const customExpenseCategories = useMemo(() => resolvedCustomCategories.filter(c => c.type === 'expense'), [resolvedCustomCategories]);
   const customIncomeCategories = useMemo(() => resolvedCustomCategories.filter(c => c.type === 'income'), [resolvedCustomCategories]);
@@ -473,14 +538,14 @@ export default function BudgetApp() {
   );
   const resolveCategory = (id) => allCategoriesFull.find(c => c.id === id) || findCategory(id);
 
-  function addCustomCategory({ label, iconKey, type }) {
+  function addCustomCategory({ label, iconKey, type, description }) {
     const trimmed = label.trim();
     const pool = type === 'income' ? allIncomeCategories : allExpenseCategories;
     const existing = pool.find(c => c.label.trim().toLowerCase() === trimmed.toLowerCase());
     if (existing) return existing.id;
     const id = 'custom_' + uid();
     const color = CATEGORY_PALETTE[customCategories.length % CATEGORY_PALETTE.length];
-    setCustomCategories(prev => [...prev, { id, label: trimmed, iconKey, type, color }]);
+    setCustomCategories(prev => [...prev, { id, label: trimmed, iconKey, type, color, description: description || '' }]);
     return id;
   }
 
@@ -494,6 +559,12 @@ export default function BudgetApp() {
 
   const anyOverLimit = useMemo(
     () => Object.entries(limits).some(([catId, lim]) => lim > 0 && (spentByCategory[catId] || 0) > lim),
+    [limits, spentByCategory]
+  );
+
+  const totalLimits = useMemo(() => Object.values(limits).reduce((s, v) => s + (Number(v) || 0), 0), [limits]);
+  const totalSpentLimited = useMemo(
+    () => Object.keys(limits).reduce((s, catId) => s + (spentByCategory[catId] || 0), 0),
     [limits, spentByCategory]
   );
 
@@ -531,8 +602,8 @@ export default function BudgetApp() {
     return groups;
   }, [transactions]);
 
-  function addAccount({ name, type, balance }) {
-    setAccounts(prev => [...prev, { id: uid(), name, type, balance: Number(balance) || 0 }]);
+  function addAccount({ name, type, balance, photo }) {
+    setAccounts(prev => [...prev, { id: uid(), name, type, balance: Number(balance) || 0, photo: photo || null }]);
   }
   function deleteAccount(id) {
     setAccounts(prev => prev.filter(a => a.id !== id));
@@ -542,6 +613,24 @@ export default function BudgetApp() {
     setGoals(prev => [...prev, { id: uid(), name, target: Number(target) || 0, current: 0, iconKey: iconKey || 'target' }]);
   }
   function deleteGoal(id) { setGoals(prev => prev.filter(g => g.id !== id)); }
+  function updateGoal(id, patch) {
+    setGoals(prev => prev.map(g => g.id === id ? { ...g, ...patch, target: patch.target !== undefined ? (Number(patch.target) || 0) : g.target } : g));
+  }
+
+  function addNote() {
+    const note = { id: uid(), title: '', body: '', pinned: false, createdAt: Date.now(), updatedAt: Date.now() };
+    setNotes(prev => [note, ...prev]);
+    return note.id;
+  }
+  function updateNote(id, patch) {
+    setNotes(prev => prev.map(n => n.id === id ? { ...n, ...patch, updatedAt: Date.now() } : n));
+  }
+  function deleteNote(id) {
+    setNotes(prev => prev.filter(n => n.id !== id));
+  }
+  function toggleNotePin(id) {
+    setNotes(prev => prev.map(n => n.id === id ? { ...n, pinned: !n.pinned } : n));
+  }
 
   function addTransaction({ kind, accountId, category, amount, note, date }) {
     const amt = Number(amount);
@@ -832,6 +921,7 @@ export default function BudgetApp() {
                       key={g.id} goal={g} delay={i * 40}
                       onDelete={() => deleteGoal(g.id)}
                       onContribute={() => setContributeGoalId(g.id)}
+                      onEdit={() => setEditGoalId(g.id)}
                       justCompleted={g.id === justCompletedId} struck={g.id === strikeId}
                     />
                   ))}
@@ -864,6 +954,18 @@ export default function BudgetApp() {
                   <span style={{ color: THEME.text, fontFamily: 'Inter, sans-serif', fontWeight: 500, fontSize: 13 }}>Распределить зарплату по лимитам</span>
                 </button>
               </div>
+              {totalLimits > 0 && (
+                <div style={{ margin: '0 20px 12px', padding: '14px 16px', borderRadius: 16, background: `linear-gradient(160deg, ${THEME.surface2}, ${THEME.surface})`, border: `1px solid ${THEME.border}` }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, fontFamily: 'Inter, sans-serif' }}>
+                    <span style={{ color: THEME.muted }}>Общая сумма лимитов</span>
+                    <span style={{ color: THEME.text, fontWeight: 600 }}>{fmt(totalLimits)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, fontFamily: 'Inter, sans-serif', marginTop: 6 }}>
+                    <span style={{ color: THEME.muted }}>Потрачено по лимитам</span>
+                    <span style={{ color: totalSpentLimited > totalLimits ? THEME.red : THEME.text, fontWeight: 600 }}>{fmt(totalSpentLimited)}</span>
+                  </div>
+                </div>
+              )}
               <div style={{ padding: '4px 20px 8px' }}>
                 {limitableCategories.map((cat, i) => (
                   <LimitRow
@@ -1036,6 +1138,14 @@ export default function BudgetApp() {
             expenseCategories={allExpenseCategories} incomeCategories={allIncomeCategories}
             customCategories={customCategories}
             onRename={renameCustomCategory} onDelete={deleteCustomCategory}
+            onCreate={(data) => addCustomCategory(data)}
+            onClose={() => setModal(null)}
+          />
+        )}
+        {modal === 'notes' && (
+          <NotesModal
+            notes={notes}
+            onAdd={addNote} onUpdate={updateNote} onDelete={deleteNote} onTogglePin={toggleNotePin}
             onClose={() => setModal(null)}
           />
         )}
@@ -1044,6 +1154,13 @@ export default function BudgetApp() {
             account={accounts.find(a => a.id === editAccountId)}
             onClose={() => setEditAccountId(null)}
             onSave={(patch) => updateAccount(editAccountId, patch)}
+          />
+        )}
+        {editGoalId && (
+          <EditGoalModal
+            goal={goals.find(g => g.id === editGoalId)}
+            onClose={() => setEditGoalId(null)}
+            onSave={(patch) => updateGoal(editGoalId, patch)}
           />
         )}
         {editTxId && (
@@ -1154,6 +1271,9 @@ function ShoppingListModal({ items, accounts, categories, onAdd, onComplete, onD
   const urgent = items.filter(it => !it.done && it.urgency === 'urgent');
   const normal = items.filter(it => !it.done && it.urgency === 'normal');
   const done = items.filter(it => it.done).sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0));
+  const pending = items.filter(it => !it.done);
+  const totalCost = pending.reduce((s, it) => s + (it.cost || 0), 0);
+  const withoutPrice = pending.filter(it => it.cost == null).length;
 
   if (view === 'add') {
     return (
@@ -1184,6 +1304,20 @@ function ShoppingListModal({ items, accounts, categories, onAdd, onComplete, onD
   return (
     <ModalShell title="Список покупок" onClose={onClose}>
       <AddTile label="Добавить покупку" full onClick={() => setView('add')} />
+
+      {pending.length > 0 && (
+        <div style={{ marginTop: 12, padding: '12px 14px', borderRadius: 14, background: `linear-gradient(160deg, ${THEME.surface2}, ${THEME.surface})`, border: `1px solid ${THEME.border}` }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, fontFamily: 'Inter, sans-serif' }}>
+            <span style={{ color: THEME.muted }}>Итого по списку</span>
+            <span style={{ color: THEME.text, fontWeight: 600, fontFamily: 'Space Grotesk, sans-serif' }}>{fmt(totalCost)}</span>
+          </div>
+          {withoutPrice > 0 && (
+            <div style={{ color: THEME.mutedDim, fontSize: 11, fontFamily: 'Inter, sans-serif', marginTop: 4 }}>
+              У {withoutPrice} {withoutPrice === 1 ? 'товара' : 'товаров'} не указана цена
+            </div>
+          )}
+        </div>
+      )}
 
       <div style={{ marginTop: 16 }}>
         <ShoppingGroup
@@ -1508,7 +1642,11 @@ function AccountCard({ account, onDelete, onEdit, delay = 0 }) {
       background: `linear-gradient(160deg, ${THEME.surface2}, ${THEME.surface})`,
       border: `1px solid ${THEME.border}`,
     }}>
-      <GlassIcon icon={meta.icon} color={THEME.blueSoft} size={48} iconSize={21} />
+      {account.photo ? (
+        <img src={account.photo} alt="" style={{ width: 48, height: 48, borderRadius: 16, objectFit: 'cover', flexShrink: 0 }} />
+      ) : (
+        <GlassIcon icon={meta.icon} color={THEME.blueSoft} size={48} iconSize={21} />
+      )}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ color: THEME.muted, fontSize: 11.5, fontFamily: 'Inter, sans-serif' }}>{meta.label}</div>
         <div style={{ color: THEME.text, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 600, fontSize: 15, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{account.name}</div>
@@ -1556,7 +1694,7 @@ function EmptyRow({ text, onClick }) {
   );
 }
 
-function GoalRow({ goal, onDelete, onContribute, delay = 0, justCompleted, struck, completed }) {
+function GoalRow({ goal, onDelete, onContribute, onEdit, delay = 0, justCompleted, struck, completed }) {
   const [confirming, setConfirming] = useState(false);
   const pct = goal.target > 0 ? Math.min(100, (goal.current / goal.target) * 100) : 0;
   const r = 26, c = 2 * Math.PI * r;
@@ -1612,14 +1750,21 @@ function GoalRow({ goal, onDelete, onContribute, delay = 0, justCompleted, struc
               Пополнить
             </button>
           )}
-          <button
-            className="tap-scale"
-            onClick={() => confirming ? onDelete() : setConfirming(true)}
-            onBlur={() => setConfirming(false)}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: confirming ? THEME.red : THEME.mutedDim, padding: 2 }}
-          >
-            <Trash2 size={13} />
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {onEdit && (
+              <button className="tap-scale" onClick={onEdit} style={{ background: 'none', border: 'none', cursor: 'pointer', color: THEME.mutedDim, padding: 2 }}>
+                <Pencil size={13} />
+              </button>
+            )}
+            <button
+              className="tap-scale"
+              onClick={() => confirming ? onDelete() : setConfirming(true)}
+              onBlur={() => setConfirming(false)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: confirming ? THEME.red : THEME.mutedDim, padding: 2 }}
+            >
+              <Trash2 size={13} />
+            </button>
+          </div>
         </div>
       )}
       {completed && (
@@ -1786,11 +1931,45 @@ function ChoiceTile({ icon: Icon, label, color, onClick }) {
   );
 }
 
+function PhotoPicker({ photo, onChange }) {
+  const [busy, setBusy] = useState(false);
+  const pick = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setBusy(true);
+    try { onChange(await readAndCompressImage(file)); } catch {} finally { setBusy(false); }
+  };
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+      {photo ? (
+        <img src={photo} alt="" style={{ width: 54, height: 54, borderRadius: 16, objectFit: 'cover', flexShrink: 0 }} />
+      ) : (
+        <div style={{ width: 54, height: 54, borderRadius: 16, background: THEME.surface2, border: `1px dashed ${THEME.borderStrong}`, display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+          <ImageIcon size={20} color={THEME.mutedDim} />
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 8 }}>
+        <label className="tap-scale" style={{ padding: '9px 13px', borderRadius: 11, background: THEME.surface2, border: `1px solid ${THEME.border}`, color: THEME.text, fontSize: 12.5, fontFamily: 'Inter, sans-serif', cursor: 'pointer' }}>
+          {busy ? 'Загрузка…' : 'Выбрать фото'}
+          <input type="file" accept="image/*" style={{ display: 'none' }} onChange={pick} disabled={busy} />
+        </label>
+        {photo && (
+          <button type="button" className="tap-scale" onClick={() => onChange(null)} style={{ padding: '9px 13px', borderRadius: 11, background: 'transparent', border: `1px solid ${THEME.border}`, color: THEME.red, fontSize: 12.5, fontFamily: 'Inter, sans-serif', cursor: 'pointer' }}>
+            Убрать
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AccountModal({ onClose, onSubmit }) {
   const [name, setName] = useState('');
   const [type, setType] = useState('card');
   const [balance, setBalance] = useState('');
-  const submit = () => { if (!name.trim()) return; onSubmit({ name: name.trim(), type, balance }); onClose(); };
+  const [photo, setPhoto] = useState(null);
+  const submit = () => { if (!name.trim()) return; onSubmit({ name: name.trim(), type, balance, photo }); onClose(); };
   return (
     <ModalShell title="Новый счёт" onClose={onClose}>
       <label style={fieldLabel()}>Название</label>
@@ -1815,6 +1994,8 @@ function AccountModal({ onClose, onSubmit }) {
       </div>
       <label style={{ ...fieldLabel(), marginTop: 14 }}>Начальный баланс</label>
       <input style={inputStyle()} type="number" inputMode="decimal" value={balance} onChange={e => setBalance(e.target.value)} placeholder="0" />
+      <label style={{ ...fieldLabel(), marginTop: 14 }}>Фото счёта (необязательно)</label>
+      <PhotoPicker photo={photo} onChange={setPhoto} />
       <button className="tap-scale" style={submitBtn()} onClick={submit}>Добавить счёт</button>
     </ModalShell>
   );
@@ -1838,14 +2019,41 @@ function GoalModal({ onClose, onSubmit }) {
   );
 }
 
+function EditGoalModal({ goal, onClose, onSave }) {
+  const [name, setName] = useState(goal ? goal.name : '');
+  const [target, setTarget] = useState(goal ? String(goal.target) : '');
+  const [iconKey, setIconKey] = useState(goal?.iconKey || 'target');
+  if (!goal) return null;
+  const submit = () => { if (!name.trim() || !Number(target)) return; onSave({ name: name.trim(), target, iconKey }); onClose(); };
+  return (
+    <ModalShell title="Изменить цель" onClose={onClose}>
+      <label style={fieldLabel()}>Название</label>
+      <input style={inputStyle()} value={name} onChange={e => setName(e.target.value)} />
+      <label style={{ ...fieldLabel(), marginTop: 14 }}>Сумма цели</label>
+      <input style={inputStyle()} type="number" inputMode="decimal" value={target} onChange={e => setTarget(e.target.value)} />
+      {goal.current > 0 && (
+        <div style={{ color: THEME.mutedDim, fontSize: 11.5, fontFamily: 'Inter, sans-serif', marginTop: 6 }}>
+          Уже накоплено: {fmt(goal.current)}
+        </div>
+      )}
+      <label style={{ ...fieldLabel(), marginTop: 14 }}>Иконка</label>
+      <IconPicker value={iconKey} onChange={setIconKey} />
+      <button className="tap-scale" style={submitBtn()} onClick={submit}>Сохранить</button>
+    </ModalShell>
+  );
+}
+
 function NewCategoryModal({ onClose, onSubmit }) {
   const [label, setLabel] = useState('');
   const [iconKey, setIconKey] = useState('tag');
-  const submit = () => { if (!label.trim()) return; onSubmit({ label: label.trim(), iconKey }); };
+  const [description, setDescription] = useState('');
+  const submit = () => { if (!label.trim()) return; onSubmit({ label: label.trim(), iconKey, description: description.trim() }); };
   return (
     <ModalShell title="Новая категория расходов" onClose={onClose}>
       <label style={fieldLabel()}>Название</label>
       <input style={inputStyle()} value={label} onChange={e => setLabel(e.target.value)} placeholder="Например, Подписки" />
+      <label style={{ ...fieldLabel(), marginTop: 14 }}>Описание (необязательно)</label>
+      <input style={inputStyle()} value={description} onChange={e => setDescription(e.target.value)} placeholder="Например, все платные сервисы" />
       <label style={{ ...fieldLabel(), marginTop: 14 }}>Иконка</label>
       <IconPicker value={iconKey} onChange={setIconKey} />
       <button className="tap-scale" style={submitBtn()} onClick={submit}>Создать и задать лимит</button>
@@ -1854,13 +2062,29 @@ function NewCategoryModal({ onClose, onSubmit }) {
 }
 
 function IconPicker({ value, onChange, color = THEME.blueSoft }) {
+  const [expanded, setExpanded] = useState(false);
+  const selected = ICON_OPTIONS.find(o => o.key === value) || ICON_OPTIONS[0];
+
+  if (!expanded) {
+    return (
+      <button className="tap-scale" type="button" onClick={() => setExpanded(true)} style={{
+        display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderRadius: 12, cursor: 'pointer',
+        border: `1px solid ${THEME.border}`, background: THEME.surface2, width: '100%',
+      }}>
+        <GlassIcon icon={selected.icon} color={color} size={34} iconSize={15} />
+        <span style={{ color: THEME.muted, fontSize: 13, fontFamily: 'Inter, sans-serif', flex: 1, textAlign: 'left' }}>Выбрать иконку</span>
+        <ChevronDown size={16} color={THEME.mutedDim} />
+      </button>
+    );
+  }
+
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+    <div className="anim-in" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
       {ICON_OPTIONS.map(opt => {
         const Icon = opt.icon;
         const active = value === opt.key;
         return (
-          <button key={opt.key} className="tap-scale" onClick={() => onChange(opt.key)} type="button" style={{
+          <button key={opt.key} className="tap-scale" onClick={() => { onChange(opt.key); setExpanded(false); }} type="button" style={{
             width: 38, height: 38, borderRadius: 12, cursor: 'pointer', display: 'grid', placeItems: 'center',
             border: `1px solid ${active ? color : THEME.border}`,
             background: active ? `${color}22` : THEME.surface2,
@@ -1945,6 +2169,78 @@ function TxModal({ kind, accounts, categories, onCreateCategory, onClose, onSubm
   );
 }
 
+function GoalCalculator({ amount, onAmountChange, account, goal }) {
+  const remaining = goal ? Math.max(0, goal.target - goal.current) : 0;
+  const numAmount = Number(amount) || 0;
+  const currentPct = goal && goal.target > 0 ? Math.min(100, (goal.current / goal.target) * 100) : 0;
+  const projectedPct = goal && goal.target > 0 ? Math.min(100, ((goal.current + numAmount) / goal.target) * 100) : 0;
+  const r = 42, c = 2 * Math.PI * r;
+
+  const press = (key) => {
+    onAmountChange(prev => {
+      if (key === '⌫') return prev.slice(0, -1);
+      if (key === '.') return prev.includes('.') ? prev : (prev || '0') + '.';
+      if (prev === '0') return key;
+      return (prev || '') + key;
+    });
+  };
+
+  const quickPct = (pct) => {
+    if (!remaining) return;
+    onAmountChange(() => String(Math.round(remaining * pct / 100)));
+  };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'center', margin: '4px 0 14px' }}>
+        <div style={{ position: 'relative', width: 100, height: 100 }}>
+          <svg width={100} height={100} style={{ transform: 'rotate(-90deg)' }}>
+            <circle cx={50} cy={50} r={r} fill="none" stroke={THEME.border} strokeWidth={8} />
+            <circle
+              cx={50} cy={50} r={r} fill="none" stroke={THEME.blueSoft} strokeWidth={8}
+              strokeDasharray={c} strokeDashoffset={c - (currentPct / 100) * c} strokeLinecap="round" opacity={0.35}
+            />
+            <circle
+              cx={50} cy={50} r={r} fill="none" stroke={THEME.cyan} strokeWidth={8}
+              strokeDasharray={c} strokeDashoffset={c - (projectedPct / 100) * c} strokeLinecap="round"
+              style={{ transition: 'stroke-dashoffset 0.5s cubic-bezier(.22,1,.36,1)', filter: 'drop-shadow(0 0 5px rgba(34,211,238,0.5))' }}
+            />
+          </svg>
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+            <span style={{ color: THEME.text, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: 17, transition: 'color 0.3s ease' }}>{Math.round(projectedPct)}%</span>
+            <span style={{ color: THEME.mutedDim, fontSize: 9.5, fontFamily: 'Inter, sans-serif' }}>цели</span>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ textAlign: 'center', fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: 30, color: THEME.text, marginBottom: 12, minHeight: 38 }}>
+        {amount ? fmt(Number(amount)) : <span style={{ color: THEME.mutedDim }}>0</span>}
+      </div>
+
+      {remaining > 0 && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+          {[10, 25, 50, 100].map(p => (
+            <button key={p} className="tap-scale" type="button" onClick={() => quickPct(p)} style={{
+              flex: 1, padding: '8px 0', borderRadius: 10, cursor: 'pointer',
+              border: `1px solid ${THEME.border}`, background: THEME.surface2, color: THEME.blueSoft,
+              fontSize: 12, fontFamily: 'Inter, sans-serif', fontWeight: 600,
+            }}>{p}%</button>
+          ))}
+        </div>
+      )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+        {['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫'].map(k => (
+          <button key={k} className="tap-scale" type="button" onClick={() => press(k)} style={{
+            padding: '14px 0', borderRadius: 12, cursor: 'pointer', border: `1px solid ${THEME.border}`,
+            background: THEME.surface2, color: THEME.text, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 600, fontSize: 17,
+          }}>{k}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ContributeModal({ goals, accounts, initialGoalId, onClose, onSubmit }) {
   const [goalId, setGoalId] = useState(initialGoalId || goals[0]?.id || '');
   const [accountId, setAccountId] = useState(accounts[0]?.id || '');
@@ -1967,8 +2263,11 @@ function ContributeModal({ goals, accounts, initialGoalId, onClose, onSubmit }) 
       <select style={inputStyle()} value={accountId} onChange={e => setAccountId(e.target.value)}>
         {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
       </select>
-      <label style={{ ...fieldLabel(), marginTop: 14 }}>Сумма</label>
-      <input style={inputStyle()} type="number" inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0" />
+      <label style={{ ...fieldLabel(), marginTop: 16 }}>Сумма</label>
+      <GoalCalculator
+        amount={amount} onAmountChange={setAmount}
+        account={accounts.find(a => a.id === accountId)} goal={goals.find(g => g.id === goalId)}
+      />
       <button className="tap-scale" style={submitBtn()} onClick={submit}>Пополнить</button>
     </ModalShell>
   );
@@ -2691,8 +2990,9 @@ function EditAccountModal({ account, onClose, onSave }) {
   const [name, setName] = useState(account ? account.name : '');
   const [type, setType] = useState(account ? account.type : 'card');
   const [balance, setBalance] = useState(account ? String(account.balance) : '');
+  const [photo, setPhoto] = useState(account ? account.photo || null : null);
   if (!account) return null;
-  const submit = () => { if (!name.trim()) return; onSave({ name: name.trim(), type, balance }); onClose(); };
+  const submit = () => { if (!name.trim()) return; onSave({ name: name.trim(), type, balance, photo }); onClose(); };
   return (
     <ModalShell title="Изменить счёт" onClose={onClose}>
       <label style={fieldLabel()}>Название</label>
@@ -2717,6 +3017,8 @@ function EditAccountModal({ account, onClose, onSave }) {
       </div>
       <label style={{ ...fieldLabel(), marginTop: 14 }}>Баланс</label>
       <input style={inputStyle()} type="number" inputMode="decimal" value={balance} onChange={e => setBalance(e.target.value)} />
+      <label style={{ ...fieldLabel(), marginTop: 14 }}>Фото счёта (необязательно)</label>
+      <PhotoPicker photo={photo} onChange={setPhoto} />
       <button className="tap-scale" style={submitBtn()} onClick={submit}>Сохранить</button>
     </ModalShell>
   );
@@ -2770,8 +3072,9 @@ function EditTransactionModal({ tx, accounts, categories, onClose, onSave }) {
   );
 }
 
-function CategoryManageModal({ expenseCategories, incomeCategories, customCategories, onRename, onDelete, onClose }) {
+function CategoryManageModal({ expenseCategories, incomeCategories, customCategories, onRename, onDelete, onCreate, onClose }) {
   const [editing, setEditing] = useState(null);
+  const [creatingType, setCreatingType] = useState(null);
   const customIds = new Set(customCategories.map(c => c.id));
 
   if (editing) {
@@ -2786,12 +3089,26 @@ function CategoryManageModal({ expenseCategories, incomeCategories, customCatego
     );
   }
 
+  if (creatingType) {
+    return (
+      <ModalShell title={creatingType === 'income' ? 'Новая категория дохода' : 'Новая категория расхода'} onClose={onClose}>
+        <BackLink onClick={() => setCreatingType(null)} />
+        <CategoryEditForm
+          category={{ label: '', description: '', icon: null }}
+          onSubmit={(data) => { onCreate({ ...data, type: creatingType }); setCreatingType(null); }}
+        />
+      </ModalShell>
+    );
+  }
+
   return (
     <ModalShell title="Категории" onClose={onClose}>
       <label style={fieldLabel()}>Расходы</label>
       <CategoryList categories={expenseCategories} customIds={customIds} onEdit={setEditing} onDelete={onDelete} />
+      <AddTile label="Новая категория расходов" full onClick={() => setCreatingType('expense')} />
       <label style={{ ...fieldLabel(), marginTop: 18 }}>Доходы</label>
       <CategoryList categories={incomeCategories} customIds={customIds} onEdit={setEditing} onDelete={onDelete} />
+      <AddTile label="Новая категория доходов" full onClick={() => setCreatingType('income')} />
     </ModalShell>
   );
 }
@@ -2806,7 +3123,12 @@ function CategoryList({ categories, customIds, onEdit, onDelete }) {
         return (
           <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 12, background: THEME.surface2, border: `1px solid ${THEME.border}` }}>
             <GlassIcon icon={Icon} color={c.color} size={30} iconSize={14} />
-            <span style={{ flex: 1, minWidth: 0, color: THEME.text, fontSize: 12.5, fontFamily: 'Inter, sans-serif', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.label}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ color: THEME.text, fontSize: 12.5, fontFamily: 'Inter, sans-serif', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.label}</div>
+              {c.description && (
+                <div style={{ color: THEME.mutedDim, fontSize: 10.5, fontFamily: 'Inter, sans-serif', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.description}</div>
+              )}
+            </div>
             {editable ? (
               <>
                 <button className="tap-scale" onClick={() => onEdit(c)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: THEME.mutedDim, padding: 2 }}>
@@ -2822,7 +3144,7 @@ function CategoryList({ categories, customIds, onEdit, onDelete }) {
                 </button>
               </>
             ) : (
-              <span style={{ color: THEME.mutedDim, fontSize: 10.5, fontFamily: 'Inter, sans-serif' }}>встроенная</span>
+              <span style={{ color: THEME.mutedDim, fontSize: 10.5, fontFamily: 'Inter, sans-serif', flexShrink: 0 }}>встроенная</span>
             )}
           </div>
         );
@@ -2833,16 +3155,210 @@ function CategoryList({ categories, customIds, onEdit, onDelete }) {
 
 function CategoryEditForm({ category, onSubmit }) {
   const [label, setLabel] = useState(category.label);
+  const [description, setDescription] = useState(category.description || '');
   const foundKey = Object.entries(ICON_MAP).find(([, icon]) => icon === category.icon);
   const [iconKey, setIconKey] = useState(foundKey ? foundKey[0] : 'tag');
-  const submit = () => { if (!label.trim()) return; onSubmit({ label: label.trim(), iconKey }); };
+  const submit = () => { if (!label.trim()) return; onSubmit({ label: label.trim(), iconKey, description: description.trim() }); };
   return (
     <div>
       <label style={fieldLabel()}>Название</label>
       <input style={inputStyle()} value={label} onChange={e => setLabel(e.target.value)} />
+      <label style={{ ...fieldLabel(), marginTop: 14 }}>Описание (необязательно)</label>
+      <input style={inputStyle()} value={description} onChange={e => setDescription(e.target.value)} placeholder="Например, для чего эта категория" />
       <label style={{ ...fieldLabel(), marginTop: 14 }}>Иконка</label>
       <IconPicker value={iconKey} onChange={setIconKey} />
       <button className="tap-scale" style={submitBtn()} onClick={submit} type="button">Сохранить</button>
     </div>
+  );
+}
+
+function ToolbarBtn({ label, icon: Icon, onClick, active, bold, italic, underline, strike }) {
+  return (
+    <button
+      className="tap-scale" type="button"
+      onMouseDown={e => e.preventDefault()}
+      onClick={onClick}
+      style={{
+        width: 34, height: 34, borderRadius: 10, cursor: 'pointer', display: 'grid', placeItems: 'center',
+        border: `1px solid ${active ? THEME.blueSoft : THEME.border}`,
+        background: active ? 'rgba(61,127,255,0.15)' : THEME.surface2,
+        color: active ? THEME.blueSoft : THEME.text,
+        fontFamily: 'Inter, sans-serif', fontSize: 13,
+        fontWeight: bold ? 700 : 400, fontStyle: italic ? 'italic' : 'normal',
+        textDecoration: underline ? 'underline' : strike ? 'line-through' : 'none',
+      }}
+    >
+      {Icon ? <Icon size={15} /> : label}
+    </button>
+  );
+}
+
+function NoteEditor({ note, onChange, onDelete, onTogglePin }) {
+  const bodyRef = useRef(null);
+  const [confirming, setConfirming] = useState(false);
+
+  useEffect(() => {
+    if (bodyRef.current && bodyRef.current.innerHTML !== (note.body || '')) {
+      bodyRef.current.innerHTML = note.body || '';
+    }
+  }, [note.id]);
+
+  const syncBody = () => onChange({ body: bodyRef.current ? bodyRef.current.innerHTML : '' });
+
+  const exec = (cmd) => {
+    bodyRef.current?.focus();
+    document.execCommand(cmd, false, null);
+    syncBody();
+  };
+
+  const insertChecklist = () => {
+    bodyRef.current?.focus();
+    document.execCommand('insertHTML', false, '☐ ');
+    syncBody();
+  };
+
+  return (
+    <div>
+      <input
+        style={{
+          width: '100%', boxSizing: 'border-box', border: 'none', background: 'transparent', padding: '4px 0 10px',
+          color: THEME.text, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: 18,
+        }}
+        value={note.title}
+        onChange={e => onChange({ title: e.target.value })}
+        placeholder="Название"
+      />
+      <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+        <ToolbarBtn label="Ж" bold onClick={() => exec('bold')} />
+        <ToolbarBtn label="К" italic onClick={() => exec('italic')} />
+        <ToolbarBtn label="Ч" underline onClick={() => exec('underline')} />
+        <ToolbarBtn label="S" strike onClick={() => exec('strikeThrough')} />
+        <ToolbarBtn icon={CheckSquare} onClick={insertChecklist} />
+        <ToolbarBtn icon={List} onClick={() => exec('insertUnorderedList')} />
+        <button
+          className="tap-scale" type="button" onClick={onTogglePin}
+          style={{
+            marginLeft: 'auto', width: 34, height: 34, borderRadius: 10, cursor: 'pointer', display: 'grid', placeItems: 'center',
+            background: note.pinned ? 'rgba(251,191,36,0.18)' : THEME.surface2,
+            border: `1px solid ${note.pinned ? THEME.amber : THEME.border}`,
+            color: note.pinned ? THEME.amber : THEME.mutedDim,
+          }}
+        >
+          <Star size={15} fill={note.pinned ? THEME.amber : 'none'} />
+        </button>
+      </div>
+      <div
+        ref={bodyRef}
+        contentEditable
+        suppressContentEditableWarning
+        onInput={syncBody}
+        data-placeholder="Текст заметки…"
+        style={{
+          minHeight: 220, borderRadius: 14, padding: 12, background: THEME.surface2, border: `1px solid ${THEME.border}`,
+          color: THEME.text, fontSize: 14, fontFamily: 'Inter, sans-serif', outline: 'none', lineHeight: 1.55,
+        }}
+      />
+      <div style={{ color: THEME.mutedDim, fontSize: 11, fontFamily: 'Inter, sans-serif', marginTop: 8 }}>
+        Изменено: {formatNoteDate(note.updatedAt)}
+      </div>
+      <button
+        className="tap-scale" type="button"
+        onClick={() => confirming ? onDelete() : setConfirming(true)}
+        onBlur={() => setConfirming(false)}
+        style={{ ...submitBtn(), marginTop: 14, background: 'transparent', border: `1px solid ${confirming ? THEME.red : THEME.border}`, color: THEME.red }}
+      >
+        {confirming ? 'Точно удалить?' : 'Удалить заметку'}
+      </button>
+    </div>
+  );
+}
+
+function NoteRow({ note, delay = 0, onClick, onDelete }) {
+  const [confirming, setConfirming] = useState(false);
+  const preview = stripHtml(note.body).trim().slice(0, 80);
+  return (
+    <div className="anim-in" style={{
+      display: 'flex', alignItems: 'center', gap: 10, padding: 12, borderRadius: 16, animationDelay: `${delay}ms`,
+      background: `linear-gradient(160deg, ${THEME.surface2}, ${THEME.surface})`, border: `1px solid ${THEME.border}`,
+    }}>
+      <button className="tap-scale" onClick={onClick} type="button" style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', flex: 1, minWidth: 0, textAlign: 'left', display: 'flex', alignItems: 'center', gap: 10 }}>
+        <GlassIcon icon={StickyNote} color={note.pinned ? THEME.amber : THEME.mutedDim} size={38} iconSize={17} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ color: THEME.text, fontSize: 13.5, fontFamily: 'Inter, sans-serif', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {note.title || 'Без названия'}
+          </div>
+          <div style={{ color: THEME.mutedDim, fontSize: 11.5, fontFamily: 'Inter, sans-serif', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {formatNoteDate(note.updatedAt)}{preview ? ` · ${preview}` : ''}
+          </div>
+        </div>
+      </button>
+      <button
+        className="tap-scale"
+        onClick={() => confirming ? onDelete() : setConfirming(true)}
+        onBlur={() => setConfirming(false)}
+        style={{ background: 'none', border: 'none', cursor: 'pointer', color: confirming ? THEME.red : THEME.mutedDim, padding: 2 }}
+      >
+        <Trash2 size={14} />
+      </button>
+    </div>
+  );
+}
+
+function NotesModal({ notes, onAdd, onUpdate, onDelete, onTogglePin, onClose }) {
+  const [view, setView] = useState('list');
+  const [editId, setEditId] = useState(null);
+  const [search, setSearch] = useState('');
+
+  const openNew = () => { const id = onAdd(); setEditId(id); setView('edit'); };
+  const openEdit = (id) => { setEditId(id); setView('edit'); };
+
+  if (view === 'edit') {
+    const note = notes.find(n => n.id === editId);
+    if (!note) { setView('list'); return null; }
+    return (
+      <ModalShell title="Заметка" onClose={onClose}>
+        <BackLink onClick={() => setView('list')} />
+        <NoteEditor
+          note={note}
+          onChange={(patch) => onUpdate(note.id, patch)}
+          onDelete={() => { onDelete(note.id); setView('list'); }}
+          onTogglePin={() => onTogglePin(note.id)}
+        />
+      </ModalShell>
+    );
+  }
+
+  const q = search.trim().toLowerCase();
+  const filtered = notes.filter(n => !q || n.title.toLowerCase().includes(q) || stripHtml(n.body).toLowerCase().includes(q));
+  const pinned = filtered.filter(n => n.pinned).sort((a, b) => b.updatedAt - a.updatedAt);
+  const others = filtered.filter(n => !n.pinned).sort((a, b) => b.updatedAt - a.updatedAt);
+
+  return (
+    <ModalShell title="Заметки" onClose={onClose}>
+      <AddTile label="Новая заметка" full onClick={openNew} />
+      {notes.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <input style={inputStyle()} value={search} onChange={e => setSearch(e.target.value)} placeholder="Поиск по заметкам" />
+        </div>
+      )}
+      <div style={{ marginTop: 14 }}>
+        {filtered.length === 0 && (
+          <EmptyRow text={notes.length === 0 ? 'Пока нет заметок' : 'Ничего не найдено'} onClick={notes.length === 0 ? openNew : undefined} />
+        )}
+        {pinned.length > 0 && (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ color: THEME.mutedDim, fontSize: 11, fontFamily: 'Inter, sans-serif', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Закреплённые</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {pinned.map((n, i) => <NoteRow key={n.id} note={n} delay={i * 30} onClick={() => openEdit(n.id)} onDelete={() => onDelete(n.id)} />)}
+            </div>
+          </div>
+        )}
+        {others.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {others.map((n, i) => <NoteRow key={n.id} note={n} delay={i * 30} onClick={() => openEdit(n.id)} onDelete={() => onDelete(n.id)} />)}
+          </div>
+        )}
+      </div>
+    </ModalShell>
   );
 }
