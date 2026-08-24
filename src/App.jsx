@@ -6,7 +6,7 @@ import {
   List, Gauge, BarChart3, Pencil, Settings, PiggyBank, Check, ShoppingCart, ChevronDown,
   Coffee, Plane, Dumbbell, Fuel, Phone, Music, Book, PawPrint, GraduationCap, Wrench, Tag,
   Calendar, ChevronLeft, ChevronRight, NotebookPen, Percent, Menu, Repeat, PencilLine, Power,
-  StickyNote, CheckSquare, Star, Image as ImageIcon,
+  StickyNote, CheckSquare, Star, Image as ImageIcon, ListOrdered,
   Pizza, Beer, Wine, Cake, Bus, Train, Bike, Ship,
   Lightbulb, Droplet, Flame, Wifi, Tv, Sofa, Bed,
   ShoppingBasket, Shirt, Watch, Glasses,
@@ -21,7 +21,7 @@ import {
 } from 'recharts';
 import { Browser } from '@capacitor/browser';
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 const UPDATE_REPO = 'kutlugildinartem-dotcom/kazna-budget-app';
 
 function isVersionNewer(latest, current) {
@@ -311,6 +311,9 @@ function getFontStyle() {
   .tap-scale:active { transform: scale(0.92); opacity: 0.92; }
   * { -webkit-tap-highlight-color: transparent; }
   [contenteditable]:empty:before { content: attr(data-placeholder); color: ${THEME.mutedDim}; pointer-events: none; }
+  [contenteditable] summary { color: ${THEME.text}; }
+  [contenteditable] summary::marker { color: ${THEME.blueSoft}; }
+  [contenteditable] details { border-left: 2px solid ${THEME.border}; padding-left: 8px; }
 `;
 }
 
@@ -591,6 +594,40 @@ export default function BudgetApp() {
     return Object.values(map).sort((a, b) => b.value - a.value).slice(0, 6);
   }, [transactions, allCategoriesFull]);
 
+  const capitalFactors = useMemo(() => {
+    const monthTx = transactions.filter(t => t.date.slice(0, 7) === monthKey);
+    const incomeMap = {}, expenseMap = {};
+    let totalIncome = 0, totalExpense = 0;
+    monthTx.forEach(t => {
+      const cat = resolveCategory(t.category);
+      const map = t.type === 'income' ? incomeMap : expenseMap;
+      if (!map[cat.id]) map[cat.id] = { label: cat.label, color: cat.color, icon: cat.icon, value: 0 };
+      map[cat.id].value += t.amount;
+      if (t.type === 'income') totalIncome += t.amount; else totalExpense += t.amount;
+    });
+    const toList = (map, total) => Object.values(map)
+      .sort((a, b) => b.value - a.value)
+      .map(x => ({ ...x, pct: total > 0 ? (x.value / total) * 100 : 0 }));
+    return {
+      totalIncome, totalExpense, net: totalIncome - totalExpense,
+      income: toList(incomeMap, totalIncome), expense: toList(expenseMap, totalExpense),
+    };
+  }, [transactions, monthKey, allCategoriesFull]);
+
+  const limitsSavings = useMemo(() => {
+    let saved = 0, overspent = 0;
+    const details = [];
+    limitableCategories.forEach(cat => {
+      const lim = limits[cat.id];
+      if (!lim || lim <= 0) return;
+      const spent = spentByCategory[cat.id] || 0;
+      const diff = lim - spent;
+      details.push({ cat, limit: lim, spent, diff });
+      if (diff > 0) saved += diff; else overspent += -diff;
+    });
+    return { saved, overspent, details: details.sort((a, b) => a.diff - b.diff) };
+  }, [limits, spentByCategory, limitableCategories]);
+
   const groupedTransactions = useMemo(() => {
     const sorted = [...transactions].sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
     const groups = [];
@@ -784,7 +821,7 @@ export default function BudgetApp() {
       <style>{getFontStyle()}</style>
       <div style={styles.phone}>
 
-        <div className="no-scrollbar" style={{ position: 'absolute', inset: 0, overflowY: 'auto', overflowX: 'hidden', paddingBottom: 150 }}>
+        <div className="no-scrollbar" style={{ position: 'absolute', inset: 0, overflowY: 'auto', overflowX: 'hidden', paddingTop: 'env(safe-area-inset-top)', paddingBottom: 150 }}>
           <div style={styles.glow} />
 
           {tab === 'home' && (
@@ -987,6 +1024,8 @@ export default function BudgetApp() {
                 <EmptyRow text="Появится, как только будут операции" />
               ) : (
                 <div style={{ padding: '4px 20px 8px' }}>
+                  <CapitalFactorsCard data={capitalFactors} monthLabel={new Date(monthKey + '-01').toLocaleDateString('ru-RU', { month: 'long' })} />
+
                   <ChartCard title="Динамика операций">
                     <ResponsiveContainer width="100%" height={140}>
                       <LineChart data={flowData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
@@ -1013,6 +1052,8 @@ export default function BudgetApp() {
                       </ResponsiveContainer>
                     </ChartCard>
                   )}
+
+                  <LimitsSavingsCard data={limitsSavings} />
                 </div>
               )}
             </div>
@@ -1814,6 +1855,128 @@ function LimitRow({ category, spent, limit, onEdit, delay = 0 }) {
         ) : (
           <div style={{ fontSize: 12, fontFamily: 'Inter, sans-serif', color: THEME.mutedDim }}>Лимит не задан</div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function FactorRow({ factor, negative }) {
+  const Icon = factor.icon;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <GlassIcon icon={Icon} color={factor.color} size={30} iconSize={14} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, fontFamily: 'Inter, sans-serif' }}>
+          <span style={{ color: THEME.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{factor.label}</span>
+          <span style={{ color: negative ? THEME.red : THEME.green, fontWeight: 600, flexShrink: 0, marginLeft: 8 }}>
+            {negative ? '−' : '+'}{fmt(factor.value)}
+          </span>
+        </div>
+        <div style={{ height: 5, borderRadius: 999, background: THEME.border, overflow: 'hidden', marginTop: 5 }}>
+          <div style={{ height: '100%', width: `${Math.min(100, factor.pct)}%`, background: factor.color, borderRadius: 999, transition: 'width 0.6s cubic-bezier(.22,1,.36,1)' }} />
+        </div>
+      </div>
+      <span style={{ color: THEME.mutedDim, fontSize: 11, fontFamily: 'Inter, sans-serif', flexShrink: 0, width: 34, textAlign: 'right' }}>{Math.round(factor.pct)}%</span>
+    </div>
+  );
+}
+
+function CapitalFactorsCard({ data, monthLabel }) {
+  const { totalIncome, totalExpense, net, income, expense } = data;
+  const netPositive = net >= 0;
+  const hasData = income.length > 0 || expense.length > 0;
+  return (
+    <div className="anim-in" style={{
+      borderRadius: 18, padding: 16, marginBottom: 12,
+      background: `linear-gradient(160deg, ${THEME.surface2}, ${THEME.surface})`,
+      border: `1px solid ${THEME.border}`,
+    }}>
+      <div style={{ color: THEME.muted, fontSize: 12, fontFamily: 'Inter, sans-serif', marginBottom: 10, textTransform: 'capitalize' }}>
+        Изменение капитала · {monthLabel}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 14 }}>
+        <span style={{ fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: 26, color: netPositive ? THEME.green : THEME.red }}>
+          {netPositive ? '+' : ''}{fmt(net)}
+        </span>
+        {totalIncome > 0 && (
+          <span style={{ color: THEME.mutedDim, fontSize: 12, fontFamily: 'Inter, sans-serif' }}>
+            {netPositive ? '+' : ''}{Math.round((net / totalIncome) * 100)}% к доходу
+          </span>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', gap: 10, marginBottom: hasData ? 16 : 0 }}>
+        <div style={{ flex: 1, padding: '10px 12px', borderRadius: 14, background: 'rgba(52,211,153,0.1)', border: '1px solid rgba(52,211,153,0.25)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: THEME.green, fontSize: 11, fontFamily: 'Inter, sans-serif' }}>
+            <ArrowUpRight size={13} /> Доход
+          </div>
+          <div style={{ color: THEME.text, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: 16, marginTop: 2 }}>{fmt(totalIncome)}</div>
+        </div>
+        <div style={{ flex: 1, padding: '10px 12px', borderRadius: 14, background: 'rgba(251,113,133,0.1)', border: '1px solid rgba(251,113,133,0.25)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: THEME.red, fontSize: 11, fontFamily: 'Inter, sans-serif' }}>
+            <ArrowDownRight size={13} /> Расход
+          </div>
+          <div style={{ color: THEME.text, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: 16, marginTop: 2 }}>{fmt(totalExpense)}</div>
+        </div>
+      </div>
+
+      {income.length > 0 && (
+        <div style={{ marginBottom: expense.length > 0 ? 14 : 0 }}>
+          <div style={{ color: THEME.mutedDim, fontSize: 10.5, fontFamily: 'Inter, sans-serif', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Источники дохода</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {income.map(f => <FactorRow key={f.label} factor={f} />)}
+          </div>
+        </div>
+      )}
+
+      {expense.length > 0 && (
+        <div>
+          <div style={{ color: THEME.mutedDim, fontSize: 10.5, fontFamily: 'Inter, sans-serif', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Куда ушли деньги</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {expense.map(f => <FactorRow key={f.label} factor={f} negative />)}
+          </div>
+        </div>
+      )}
+
+      {!hasData && (
+        <div style={{ color: THEME.mutedDim, fontSize: 12.5, fontFamily: 'Inter, sans-serif', textAlign: 'center', padding: '4px 0' }}>
+          В этом месяце операций ещё не было
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LimitsSavingsCard({ data }) {
+  if (data.details.length === 0) return null;
+  return (
+    <div className="anim-in" style={{
+      borderRadius: 18, padding: 16, marginBottom: 12,
+      background: `linear-gradient(160deg, ${THEME.surface2}, ${THEME.surface})`,
+      border: `1px solid ${THEME.border}`,
+    }}>
+      <div style={{ color: THEME.muted, fontSize: 12, fontFamily: 'Inter, sans-serif', marginBottom: 10 }}>Экономия по лимитам</div>
+      <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
+        <div style={{ flex: 1, padding: '10px 12px', borderRadius: 14, background: 'rgba(52,211,153,0.1)', border: '1px solid rgba(52,211,153,0.25)' }}>
+          <div style={{ color: THEME.green, fontSize: 11, fontFamily: 'Inter, sans-serif' }}>Сэкономлено</div>
+          <div style={{ color: THEME.text, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: 16, marginTop: 2 }}>+{fmt(data.saved)}</div>
+        </div>
+        <div style={{ flex: 1, padding: '10px 12px', borderRadius: 14, background: 'rgba(251,113,133,0.1)', border: '1px solid rgba(251,113,133,0.25)' }}>
+          <div style={{ color: THEME.red, fontSize: 11, fontFamily: 'Inter, sans-serif' }}>Перерасход</div>
+          <div style={{ color: THEME.text, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: 16, marginTop: 2 }}>−{fmt(data.overspent)}</div>
+        </div>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {data.details.map(d => (
+          <div key={d.cat.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <GlassIcon icon={d.cat.icon} color={d.cat.color} size={28} iconSize={13} />
+            <span style={{ flex: 1, minWidth: 0, color: THEME.text, fontSize: 12.5, fontFamily: 'Inter, sans-serif', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.cat.label}</span>
+            <span style={{ color: d.diff >= 0 ? THEME.green : THEME.red, fontSize: 12.5, fontFamily: 'Inter, sans-serif', fontWeight: 600, flexShrink: 0 }}>
+              {d.diff >= 0 ? '+' : ''}{fmt(d.diff)}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -3196,6 +3359,7 @@ function ToolbarBtn({ label, icon: Icon, onClick, active, bold, italic, underlin
 function NoteEditor({ note, onChange, onDelete, onTogglePin }) {
   const bodyRef = useRef(null);
   const [confirming, setConfirming] = useState(false);
+  const [sizeOpen, setSizeOpen] = useState(false);
 
   useEffect(() => {
     if (bodyRef.current && bodyRef.current.innerHTML !== (note.body || '')) {
@@ -3217,6 +3381,28 @@ function NoteEditor({ note, onChange, onDelete, onTogglePin }) {
     syncBody();
   };
 
+  const applySize = (size) => {
+    bodyRef.current?.focus();
+    document.execCommand('fontSize', false, String(size));
+    syncBody();
+    setSizeOpen(false);
+  };
+
+  const insertToggle = () => {
+    bodyRef.current?.focus();
+    const sel = window.getSelection();
+    let selectedHtml = '';
+    if (sel && sel.rangeCount > 0 && !sel.isCollapsed && bodyRef.current.contains(sel.anchorNode)) {
+      const range = sel.getRangeAt(0);
+      const div = document.createElement('div');
+      div.appendChild(range.cloneContents());
+      selectedHtml = div.innerHTML;
+    }
+    const html = `<details style="margin:8px 0;"><summary style="cursor:pointer;font-weight:600;">Заголовок</summary><div style="margin-top:6px;">${selectedHtml || 'Текст под заголовком'}</div></details><div><br></div>`;
+    document.execCommand('insertHTML', false, html);
+    syncBody();
+  };
+
   return (
     <div>
       <input
@@ -3228,13 +3414,16 @@ function NoteEditor({ note, onChange, onDelete, onTogglePin }) {
         onChange={e => onChange({ title: e.target.value })}
         placeholder="Название"
       />
-      <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: 6, marginBottom: sizeOpen ? 8 : 10, flexWrap: 'wrap', alignItems: 'center' }}>
         <ToolbarBtn label="Ж" bold onClick={() => exec('bold')} />
         <ToolbarBtn label="К" italic onClick={() => exec('italic')} />
         <ToolbarBtn label="Ч" underline onClick={() => exec('underline')} />
         <ToolbarBtn label="S" strike onClick={() => exec('strikeThrough')} />
         <ToolbarBtn icon={CheckSquare} onClick={insertChecklist} />
         <ToolbarBtn icon={List} onClick={() => exec('insertUnorderedList')} />
+        <ToolbarBtn icon={ListOrdered} onClick={() => exec('insertOrderedList')} />
+        <ToolbarBtn label="Aa" active={sizeOpen} onClick={() => setSizeOpen(v => !v)} />
+        <ToolbarBtn icon={ChevronDown} onClick={insertToggle} />
         <button
           className="tap-scale" type="button" onClick={onTogglePin}
           style={{
@@ -3247,6 +3436,23 @@ function NoteEditor({ note, onChange, onDelete, onTogglePin }) {
           <Star size={15} fill={note.pinned ? THEME.amber : 'none'} />
         </button>
       </div>
+      {sizeOpen && (
+        <div className="anim-in" style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+          {[{ label: 'Мелкий', size: 2, fontSize: 12 }, { label: 'Обычный', size: 3, fontSize: 14 }, { label: 'Крупный', size: 5, fontSize: 18 }].map(opt => (
+            <button
+              key={opt.size} className="tap-scale" type="button"
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => applySize(opt.size)}
+              style={{
+                flex: 1, padding: '8px 0', borderRadius: 10, cursor: 'pointer', border: `1px solid ${THEME.border}`,
+                background: THEME.surface2, color: THEME.text, fontFamily: 'Inter, sans-serif', fontSize: opt.fontSize, fontWeight: 600,
+              }}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
       <div
         ref={bodyRef}
         contentEditable
