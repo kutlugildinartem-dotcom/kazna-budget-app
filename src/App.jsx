@@ -21,7 +21,7 @@ import {
 } from 'recharts';
 import { Browser } from '@capacitor/browser';
 
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 const UPDATE_REPO = 'kutlugildinartem-dotcom/kazna-budget-app';
 
 function isVersionNewer(latest, current) {
@@ -35,18 +35,14 @@ function isVersionNewer(latest, current) {
   return false;
 }
 
-async function checkForUpdate() {
-  try {
-    const res = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`);
-    if (!res.ok) return null;
-    const data = await res.json();
-    const latest = (data.tag_name || '').replace(/^v/, '');
-    const asset = (data.assets || []).find(a => a.name.endsWith('.apk'));
-    if (!latest || !asset || !isVersionNewer(latest, APP_VERSION)) return null;
-    return { version: latest, url: asset.browser_download_url };
-  } catch {
-    return null;
-  }
+async function fetchLatestRelease() {
+  const res = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`);
+  if (!res.ok) throw new Error(`Сервер вернул ${res.status}`);
+  const data = await res.json();
+  const latest = (data.tag_name || '').replace(/^v/, '');
+  const asset = (data.assets || []).find(a => a.name.endsWith('.apk'));
+  if (!latest || !asset) throw new Error('В релизе нет apk-файла');
+  return { version: latest, url: asset.browser_download_url };
 }
 
 async function fetchUsdRate() {
@@ -414,6 +410,7 @@ export default function BudgetApp() {
   const [loaded, setLoaded] = useState(false);
   const [saveError, setSaveError] = useState(false);
   const [updateInfo, setUpdateInfo] = useState(null);
+  const [updateCheck, setUpdateCheck] = useState({ status: 'idle' });
   const [tab, setTab] = useState('home');
   const [modal, setModal] = useState(null);
   const [limitModalCat, setLimitModalCat] = useState(null);
@@ -470,9 +467,31 @@ export default function BudgetApp() {
     return () => { cancelled = true; };
   }, []);
 
+  async function runUpdateCheck() {
+    setUpdateCheck({ status: 'checking' });
+    try {
+      const latest = await fetchLatestRelease();
+      if (isVersionNewer(latest.version, APP_VERSION)) {
+        setUpdateInfo(latest);
+        setUpdateCheck({ status: 'available', version: latest.version });
+      } else {
+        setUpdateInfo(null);
+        setUpdateCheck({ status: 'upToDate', version: latest.version });
+      }
+    } catch (e) {
+      setUpdateCheck({ status: 'error', message: e?.message || 'неизвестная ошибка' });
+    }
+  }
+
   useEffect(() => {
     if (!loaded) return;
-    checkForUpdate().then(info => { if (info) setUpdateInfo(info); });
+    runUpdateCheck();
+  }, [loaded]);
+
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === 'visible' && loaded) runUpdateCheck(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
   }, [loaded]);
 
   function openUpdate() {
@@ -1188,6 +1207,7 @@ export default function BudgetApp() {
         {modal === 'settings' && (
           <SettingsModal
             currency={currency} accentId={accentId} barItemIds={barItemIds} homeSections={homeSections}
+            updateCheck={updateCheck} onCheckUpdate={runUpdateCheck} onOpenUpdate={openUpdate} updateInfo={updateInfo}
             onClose={() => setModal(null)}
             onSave={({ currency: c, accentId: a, homeSections: hs, barItemIds: b }) => {
               setCurrency(c); setAccentId(a); setHomeSections(hs); setBarItemIds(b);
@@ -2656,7 +2676,7 @@ function LimitModal({ category, currentLimit, accounts, onClose, onSave, onClear
   );
 }
 
-function SettingsModal({ currency, accentId, barItemIds, homeSections, onClose, onSave }) {
+function SettingsModal({ currency, accentId, barItemIds, homeSections, updateCheck, onCheckUpdate, onOpenUpdate, updateInfo, onClose, onSave }) {
   const [selectedCurrency, setSelectedCurrency] = useState(currency);
   const [selectedAccent, setSelectedAccent] = useState(accentId);
   const [barIds, setBarIds] = useState(barItemIds);
@@ -2729,6 +2749,40 @@ function SettingsModal({ currency, accentId, barItemIds, homeSections, onClose, 
         {ALL_NAV_SECTIONS.map(s => (
           <ToggleChip key={s.id} label={s.label} active={barIds.includes(s.id)} onClick={() => toggleBar(s.id)} />
         ))}
+      </div>
+
+      <label style={{ ...fieldLabel(), marginTop: 18 }}>Обновления</label>
+      <div style={{ padding: '12px 14px', borderRadius: 14, background: THEME.surface2, border: `1px solid ${THEME.border}` }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+          <span style={{ color: THEME.muted, fontSize: 12.5, fontFamily: 'Inter, sans-serif' }}>Версия {APP_VERSION}</span>
+          <button
+            className="tap-scale" type="button" onClick={onCheckUpdate} disabled={updateCheck.status === 'checking'}
+            style={{
+              padding: '7px 12px', borderRadius: 10, cursor: updateCheck.status === 'checking' ? 'default' : 'pointer',
+              border: `1px solid ${THEME.border}`, background: THEME.surface, color: THEME.blueSoft,
+              fontSize: 12, fontFamily: 'Inter, sans-serif', fontWeight: 600,
+            }}
+          >
+            {updateCheck.status === 'checking' ? 'Проверяем…' : 'Проверить'}
+          </button>
+        </div>
+        {updateCheck.status === 'upToDate' && (
+          <div style={{ color: THEME.green, fontSize: 12, fontFamily: 'Inter, sans-serif', marginTop: 8 }}>Установлена последняя версия</div>
+        )}
+        {updateCheck.status === 'error' && (
+          <div style={{ color: THEME.red, fontSize: 12, fontFamily: 'Inter, sans-serif', marginTop: 8 }}>Не удалось проверить: {updateCheck.message}</div>
+        )}
+        {updateCheck.status === 'available' && updateInfo && (
+          <button
+            className="tap-scale" type="button" onClick={onOpenUpdate}
+            style={{
+              width: '100%', marginTop: 8, padding: '9px 0', borderRadius: 10, cursor: 'pointer', border: 'none',
+              background: 'rgba(52,211,153,0.15)', color: THEME.green, fontSize: 12.5, fontFamily: 'Inter, sans-serif', fontWeight: 600,
+            }}
+          >
+            Доступна версия {updateCheck.version} — скачать
+          </button>
+        )}
       </div>
 
       <button className="tap-scale" style={submitBtn()} onClick={submit}>Сохранить</button>
