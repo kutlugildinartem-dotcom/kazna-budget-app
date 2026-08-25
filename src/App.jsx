@@ -17,11 +17,11 @@ import {
 } from 'lucide-react';
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  BarChart, Bar, Cell
+  BarChart, Bar, Cell, ReferenceLine
 } from 'recharts';
 import { Browser } from '@capacitor/browser';
 
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.5.0';
 const UPDATE_REPO = 'kutlugildinartem-dotcom/kazna-budget-app';
 
 function isVersionNewer(latest, current) {
@@ -329,6 +329,9 @@ function getFontStyle() {
   [contenteditable] summary { color: ${THEME.text}; }
   [contenteditable] summary::marker { color: ${THEME.blueSoft}; }
   [contenteditable] details { border-left: 2px solid ${THEME.border}; padding-left: 8px; }
+  .recharts-wrapper, .recharts-surface, .recharts-wrapper *, .recharts-wrapper *:focus, .recharts-surface:focus {
+    outline: none !important; -webkit-tap-highlight-color: transparent;
+  }
 `;
 }
 
@@ -617,7 +620,7 @@ export default function BudgetApp() {
     [limits, spentByCategory]
   );
 
-  const capitalFlowData = useMemo(() => {
+  const capitalCandles = useMemo(() => {
     const events = [
       ...transactions.map(t => ({ date: t.date, createdAt: t.createdAt, delta: t.type === 'income' ? t.amount : -t.amount })),
       ...balanceAdjustments.map(a => ({ date: a.date, createdAt: a.createdAt, delta: a.delta })),
@@ -625,11 +628,28 @@ export default function BudgetApp() {
     if (events.length === 0) return [];
     const netAll = events.reduce((s, e) => s + e.delta, 0);
     let running = totalBalance - netAll;
-    return events.map(e => {
+    const byDate = {};
+    const order = [];
+    events.forEach(e => {
+      const before = running;
       running += e.delta;
+      const after = running;
+      if (!byDate[e.date]) {
+        byDate[e.date] = { date: e.date, open: before, high: Math.max(before, after), low: Math.min(before, after), close: after };
+        order.push(e.date);
+      } else {
+        const d = byDate[e.date];
+        d.close = after;
+        d.high = Math.max(d.high, before, after);
+        d.low = Math.min(d.low, before, after);
+      }
+    });
+    return order.map(date => {
+      const d = byDate[date];
       return {
-        label: new Date(e.date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }),
-        value: Math.round(running * 100) / 100,
+        ...d,
+        range: [Math.round(d.low * 100) / 100, Math.round(d.high * 100) / 100],
+        label: new Date(date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }),
       };
     });
   }, [transactions, balanceAdjustments, totalBalance]);
@@ -1108,15 +1128,7 @@ export default function BudgetApp() {
               ) : (
                 <div style={{ padding: '4px 20px 8px' }}>
                   <ChartCard title="Общий капитал">
-                    <ResponsiveContainer width="100%" height={140}>
-                      <LineChart data={capitalFlowData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-                        <CartesianGrid stroke={THEME.border} vertical={false} />
-                        <XAxis dataKey="label" tick={{ fill: THEME.mutedDim, fontSize: 10 }} axisLine={{ stroke: THEME.border }} tickLine={false} />
-                        <YAxis tick={{ fill: THEME.mutedDim, fontSize: 10 }} axisLine={false} tickLine={false} width={46} />
-                        <Tooltip contentStyle={{ background: THEME.surface2, border: `1px solid ${THEME.border}`, borderRadius: 10, fontSize: 12 }} labelStyle={{ color: THEME.muted }} itemStyle={{ color: THEME.text }} formatter={(v) => [fmt(v), '']} />
-                        <Line type="monotone" dataKey="value" stroke={THEME.blueSoft} strokeWidth={2.5} dot={false} animationDuration={700} animationEasing="ease-out" />
-                      </LineChart>
-                    </ResponsiveContainer>
+                    <CapitalCandleChart data={capitalCandles} />
                   </ChartCard>
 
                   <CapitalFactorsCard data={capitalFactors} monthLabel={new Date(monthKey + '-01').toLocaleDateString('ru-RU', { month: 'long' })} />
@@ -2106,6 +2118,78 @@ function LimitsSavingsCard({ data }) {
         ))}
       </div>
     </div>
+  );
+}
+
+function CandleShape(props) {
+  const { x, y, width, height, payload } = props;
+  if (!payload || height <= 0) return null;
+  const { open, close, high, low } = payload;
+  const isUp = close >= open;
+  const color = isUp ? THEME.green : THEME.red;
+  const range = (high - low) || 1;
+  const valueToY = (v) => y + ((high - v) / range) * height;
+  const openY = valueToY(open);
+  const closeY = valueToY(close);
+  const bodyTop = Math.min(openY, closeY);
+  const bodyHeight = Math.max(2, Math.abs(closeY - openY));
+  const cx = x + width / 2;
+  const bodyWidth = Math.max(4, width * 0.55);
+  return (
+    <g>
+      <line x1={cx} x2={cx} y1={y} y2={y + height} stroke={color} strokeWidth={1.4} />
+      <rect x={cx - bodyWidth / 2} y={bodyTop} width={bodyWidth} height={bodyHeight} fill={color} rx={1.5} />
+    </g>
+  );
+}
+
+function CapitalCandleTooltip({ active, payload, label }) {
+  if (!active || !payload || !payload.length) return null;
+  const p = payload[0].payload;
+  return (
+    <div style={{ background: THEME.surface2, border: `1px solid ${THEME.border}`, borderRadius: 10, padding: '8px 10px' }}>
+      <div style={{ color: THEME.muted, fontSize: 11, fontFamily: 'Inter, sans-serif', marginBottom: 2 }}>{label}</div>
+      <div style={{ color: THEME.text, fontWeight: 700, fontFamily: 'Space Grotesk, sans-serif', fontSize: 14 }}>{fmt(p.close)}</div>
+    </div>
+  );
+}
+
+function CapitalCandleChart({ data }) {
+  const [active, setActive] = useState(null);
+
+  const [yMin, yMax] = useMemo(() => {
+    if (data.length === 0) return [0, 100];
+    let min = Infinity, max = -Infinity;
+    data.forEach(d => { min = Math.min(min, d.low); max = Math.max(max, d.high); });
+    const pad = (max - min) * 0.1 || Math.abs(max) * 0.05 || 10;
+    return [min - pad, max + pad];
+  }, [data]);
+
+  const handleMove = (state) => {
+    if (state && state.isTooltipActive && state.activePayload && state.activePayload.length) {
+      const p = state.activePayload[0].payload;
+      setActive({ label: p.label, value: p.close });
+    } else {
+      setActive(null);
+    }
+  };
+
+  if (data.length === 0) {
+    return <div style={{ color: THEME.mutedDim, fontSize: 12.5, fontFamily: 'Inter, sans-serif', textAlign: 'center', padding: '30px 0' }}>Нет данных</div>;
+  }
+
+  return (
+    <ResponsiveContainer width="100%" height={170}>
+      <BarChart data={data} margin={{ top: 8, right: 8, left: -18, bottom: 0 }} onMouseMove={handleMove} onMouseLeave={() => setActive(null)}>
+        <CartesianGrid stroke={THEME.border} vertical={false} />
+        <XAxis dataKey="label" tick={{ fill: THEME.mutedDim, fontSize: 10 }} axisLine={{ stroke: THEME.border }} tickLine={false} />
+        <YAxis domain={[yMin, yMax]} tick={{ fill: THEME.mutedDim, fontSize: 10 }} axisLine={false} tickLine={false} width={46} />
+        <Tooltip content={<CapitalCandleTooltip />} cursor={false} />
+        <Bar dataKey="range" shape={CandleShape} isAnimationActive={false} maxBarSize={22} />
+        {active && <ReferenceLine x={active.label} stroke={THEME.mutedDim} strokeDasharray="4 4" strokeWidth={1} />}
+        {active && <ReferenceLine y={active.value} stroke={THEME.mutedDim} strokeDasharray="4 4" strokeWidth={1} />}
+      </BarChart>
+    </ResponsiveContainer>
   );
 }
 
