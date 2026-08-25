@@ -21,7 +21,7 @@ import {
 } from 'recharts';
 import { Browser } from '@capacitor/browser';
 
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 const UPDATE_REPO = 'kutlugildinartem-dotcom/kazna-budget-app';
 
 function isVersionNewer(latest, current) {
@@ -44,6 +44,18 @@ async function checkForUpdate() {
     const asset = (data.assets || []).find(a => a.name.endsWith('.apk'));
     if (!latest || !asset || !isVersionNewer(latest, APP_VERSION)) return null;
     return { version: latest, url: asset.browser_download_url };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchUsdRate() {
+  try {
+    const res = await fetch('https://www.cbr-xml-daily.ru/daily_json.js');
+    if (!res.ok) return null;
+    const data = await res.json();
+    const val = data?.Valute?.USD?.Value;
+    return typeof val === 'number' ? val : null;
   } catch {
     return null;
   }
@@ -210,6 +222,13 @@ function readAndCompressImage(file, maxDim = 320) {
     };
     reader.readAsDataURL(file);
   });
+}
+
+function pluralDays(n) {
+  const mod10 = n % 10, mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return 'день';
+  if (mod10 >= 2 && mod10 <= 4 && !(mod100 >= 12 && mod100 <= 14)) return 'дня';
+  return 'дней';
 }
 
 function stripHtml(html) {
@@ -383,6 +402,8 @@ export default function BudgetApp() {
   const [shoppingItems, setShoppingItems] = useState([]);
   const [recurringPayments, setRecurringPayments] = useState([]);
   const [notes, setNotes] = useState([]);
+  const [balanceAdjustments, setBalanceAdjustments] = useState([]);
+  const [usdRate, setUsdRate] = useState(null);
   const [currency, setCurrency] = useState('₽');
   const [accentId, setAccentId] = useState('blue');
   const [barItemIds, setBarItemIds] = useState(DEFAULT_BAR_IDS);
@@ -432,6 +453,7 @@ export default function BudgetApp() {
           setShoppingItems(parsed.shoppingItems || []);
           setRecurringPayments(parsed.recurringPayments || []);
           setNotes(parsed.notes || []);
+          setBalanceAdjustments(parsed.balanceAdjustments || []);
           setCurrency(parsed.currency ?? '₽');
           setAccentId(parsed.accentId || 'blue');
           if (parsed.barItemIds) {
@@ -462,13 +484,18 @@ export default function BudgetApp() {
     (async () => {
       try {
         const res = await storageSet(STORAGE_KEY, JSON.stringify({
-          accounts, transactions, goals, limits, customCategories, shoppingItems, recurringPayments, notes,
+          accounts, transactions, goals, limits, customCategories, shoppingItems, recurringPayments, notes, balanceAdjustments,
           currency, accentId, barItemIds, homeSections,
         }));
         setSaveError(!res);
       } catch (e) { setSaveError(true); }
     })();
-  }, [accounts, transactions, goals, limits, customCategories, shoppingItems, recurringPayments, notes, currency, accentId, barItemIds, homeSections, loaded]);
+  }, [accounts, transactions, goals, limits, customCategories, shoppingItems, recurringPayments, notes, balanceAdjustments, currency, accentId, barItemIds, homeSections, loaded]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    fetchUsdRate().then(setUsdRate);
+  }, [loaded]);
 
   useEffect(() => {
     const prev = prevGoalsRef.current;
@@ -571,18 +598,44 @@ export default function BudgetApp() {
     [limits, spentByCategory]
   );
 
-  const flowData = useMemo(() => {
-    if (transactions.length === 0) return [];
-    const sorted = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
-    let running = 0;
-    return sorted.map(t => {
-      running += t.type === 'income' ? t.amount : -t.amount;
+  const capitalFlowData = useMemo(() => {
+    const events = [
+      ...transactions.map(t => ({ date: t.date, createdAt: t.createdAt, delta: t.type === 'income' ? t.amount : -t.amount })),
+      ...balanceAdjustments.map(a => ({ date: a.date, createdAt: a.createdAt, delta: a.delta })),
+    ].sort((a, b) => a.date.localeCompare(b.date) || a.createdAt - b.createdAt);
+    if (events.length === 0) return [];
+    const netAll = events.reduce((s, e) => s + e.delta, 0);
+    let running = totalBalance - netAll;
+    return events.map(e => {
+      running += e.delta;
       return {
-        label: new Date(t.date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }),
+        label: new Date(e.date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }),
         value: Math.round(running * 100) / 100,
       };
     });
-  }, [transactions]);
+  }, [transactions, balanceAdjustments, totalBalance]);
+
+  const accountFlowThisMonth = useMemo(() => {
+    const map = {};
+    accounts.forEach(a => { map[a.id] = { account: a, plus: 0, minus: 0 }; });
+    transactions.filter(t => t.date.slice(0, 7) === monthKey).forEach(t => {
+      if (!map[t.accountId]) return;
+      if (t.type === 'income') map[t.accountId].plus += t.amount;
+      else map[t.accountId].minus += t.amount;
+    });
+    balanceAdjustments.filter(a => a.date.slice(0, 7) === monthKey).forEach(a => {
+      if (!map[a.accountId]) return;
+      if (a.delta > 0) map[a.accountId].plus += a.delta;
+      else map[a.accountId].minus += -a.delta;
+    });
+    return Object.values(map).filter(x => x.plus > 0 || x.minus > 0);
+  }, [accounts, transactions, balanceAdjustments, monthKey]);
+
+  const daysUntilReset = useMemo(() => {
+    const today = new Date();
+    const dim = daysInMonth(today.getFullYear(), today.getMonth());
+    return Math.max(0, dim - today.getDate());
+  }, []);
 
   const categoryData = useMemo(() => {
     const map = {};
@@ -645,6 +698,7 @@ export default function BudgetApp() {
   function deleteAccount(id) {
     setAccounts(prev => prev.filter(a => a.id !== id));
     setTransactions(prev => prev.filter(t => t.accountId !== id));
+    setBalanceAdjustments(prev => prev.filter(a => a.accountId !== id));
   }
   function addGoal({ name, target, iconKey }) {
     setGoals(prev => [...prev, { id: uid(), name, target: Number(target) || 0, current: 0, iconKey: iconKey || 'target' }]);
@@ -733,7 +787,13 @@ export default function BudgetApp() {
   }
 
   function updateAccount(id, patch) {
-    setAccounts(prev => prev.map(a => a.id === id ? { ...a, ...patch, balance: patch.balance !== undefined ? Number(patch.balance) || 0 : a.balance } : a));
+    const acc = accounts.find(a => a.id === id);
+    const newBalance = patch.balance !== undefined ? (Number(patch.balance) || 0) : (acc ? acc.balance : 0);
+    const delta = acc ? newBalance - acc.balance : 0;
+    setAccounts(prev => prev.map(a => a.id === id ? { ...a, ...patch, balance: newBalance } : a));
+    if (delta !== 0) {
+      setBalanceAdjustments(prev => [...prev, { id: uid(), accountId: id, delta, date: todayISO(), createdAt: Date.now() }]);
+    }
   }
 
   function updateTransaction(txId, patch) {
@@ -981,6 +1041,10 @@ export default function BudgetApp() {
           {tab === 'limits' && (
             <div key="limits" className="anim-in">
               <TabHeader title="Лимиты по категориям" subtitle={`За ${new Date(monthKey + '-01').toLocaleDateString('ru-RU', { month: 'long' })}`} />
+              <div style={{ padding: '0 20px 8px', display: 'flex', alignItems: 'center', gap: 6, color: THEME.mutedDim, fontSize: 12, fontFamily: 'Inter, sans-serif' }}>
+                <Clock size={13} />
+                {daysUntilReset === 0 ? 'Лимиты обновятся сегодня' : `Лимиты обновятся через ${daysUntilReset} ${pluralDays(daysUntilReset)}`}
+              </div>
               <div style={{ padding: '0 20px 8px' }}>
                 <button className="tap-scale" onClick={() => setModal('salaryAlloc')} style={{
                   width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '11px 14px', borderRadius: 14,
@@ -1024,11 +1088,9 @@ export default function BudgetApp() {
                 <EmptyRow text="Появится, как только будут операции" />
               ) : (
                 <div style={{ padding: '4px 20px 8px' }}>
-                  <CapitalFactorsCard data={capitalFactors} monthLabel={new Date(monthKey + '-01').toLocaleDateString('ru-RU', { month: 'long' })} />
-
-                  <ChartCard title="Динамика операций">
+                  <ChartCard title="Общий капитал">
                     <ResponsiveContainer width="100%" height={140}>
-                      <LineChart data={flowData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+                      <LineChart data={capitalFlowData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
                         <CartesianGrid stroke={THEME.border} vertical={false} />
                         <XAxis dataKey="label" tick={{ fill: THEME.mutedDim, fontSize: 10 }} axisLine={{ stroke: THEME.border }} tickLine={false} />
                         <YAxis tick={{ fill: THEME.mutedDim, fontSize: 10 }} axisLine={false} tickLine={false} width={46} />
@@ -1037,6 +1099,10 @@ export default function BudgetApp() {
                       </LineChart>
                     </ResponsiveContainer>
                   </ChartCard>
+
+                  <CapitalFactorsCard data={capitalFactors} monthLabel={new Date(monthKey + '-01').toLocaleDateString('ru-RU', { month: 'long' })} />
+
+                  <AccountFlowCard data={accountFlowThisMonth} />
 
                   {categoryData.length > 0 && (
                     <ChartCard title="Расходы по категориям">
@@ -1108,11 +1174,11 @@ export default function BudgetApp() {
         {modal === 'choose' && (
           <ActionChoiceModal onClose={() => setModal(null)} onChoose={handleChooseAction} />
         )}
-        {modal === 'account' && <AccountModal onClose={() => setModal(null)} onSubmit={addAccount} />}
+        {modal === 'account' && <AccountModal onClose={() => setModal(null)} onSubmit={addAccount} usdRate={usdRate} />}
         {modal === 'goal' && <GoalModal onClose={() => setModal(null)} onSubmit={addGoal} />}
         {(modal === 'income' || modal === 'expense') && (
           <TxModal
-            kind={modal} accounts={accounts}
+            kind={modal} accounts={accounts} usdRate={usdRate}
             categories={modal === 'income' ? allIncomeCategories : allExpenseCategories}
             onCreateCategory={(data) => addCustomCategory({ ...data, type: modal })}
             onClose={() => setModal(null)}
@@ -1193,6 +1259,7 @@ export default function BudgetApp() {
         {editAccountId && (
           <EditAccountModal
             account={accounts.find(a => a.id === editAccountId)}
+            usdRate={usdRate}
             onClose={() => setEditAccountId(null)}
             onSave={(patch) => updateAccount(editAccountId, patch)}
           />
@@ -1207,7 +1274,7 @@ export default function BudgetApp() {
         {editTxId && (
           <EditTransactionModal
             tx={transactions.find(t => t.id === editTxId)}
-            accounts={accounts}
+            accounts={accounts} usdRate={usdRate}
             categories={transactions.find(t => t.id === editTxId)?.type === 'income' ? allIncomeCategories : allExpenseCategories}
             onClose={() => setEditTxId(null)}
             onSave={(patch) => updateTransaction(editTxId, patch)}
@@ -1948,6 +2015,46 @@ function CapitalFactorsCard({ data, monthLabel }) {
   );
 }
 
+function AccountFlowCard({ data }) {
+  if (data.length === 0) return null;
+  return (
+    <div className="anim-in" style={{
+      borderRadius: 18, padding: 16, marginBottom: 12,
+      background: `linear-gradient(160deg, ${THEME.surface2}, ${THEME.surface})`,
+      border: `1px solid ${THEME.border}`,
+    }}>
+      <div style={{ color: THEME.muted, fontSize: 12, fontFamily: 'Inter, sans-serif', marginBottom: 12 }}>Движение по счетам за месяц</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {data.map(({ account, plus, minus }) => {
+          const meta = ACCOUNT_TYPES[account.type];
+          const net = plus - minus;
+          return (
+            <div key={account.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {account.photo ? (
+                <img src={account.photo} alt="" style={{ width: 34, height: 34, borderRadius: 11, objectFit: 'cover', flexShrink: 0 }} />
+              ) : (
+                <GlassIcon icon={meta.icon} color={THEME.blueSoft} size={34} iconSize={15} />
+              )}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, fontFamily: 'Inter, sans-serif' }}>
+                  <span style={{ color: THEME.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{account.name}</span>
+                  <span style={{ color: net >= 0 ? THEME.green : THEME.red, fontWeight: 600, flexShrink: 0, marginLeft: 8 }}>
+                    {net >= 0 ? '+' : ''}{fmt(net)}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: 10, marginTop: 3 }}>
+                  {plus > 0 && <span style={{ color: THEME.green, fontSize: 11, fontFamily: 'Inter, sans-serif' }}>+{fmt(plus)}</span>}
+                  {minus > 0 && <span style={{ color: THEME.red, fontSize: 11, fontFamily: 'Inter, sans-serif' }}>−{fmt(minus)}</span>}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function LimitsSavingsCard({ data }) {
   if (data.details.length === 0) return null;
   return (
@@ -2094,6 +2201,58 @@ function ChoiceTile({ icon: Icon, label, color, onClick }) {
   );
 }
 
+function FxAmountField({ value, onChange, usdRate, placeholder = '0' }) {
+  const [usdMode, setUsdMode] = useState(false);
+  const [usdValue, setUsdValue] = useState('');
+
+  const handleUsdChange = (v) => {
+    setUsdValue(v);
+    if (usdRate && v) onChange(String(Math.round(Number(v) * usdRate * 100) / 100));
+    else onChange('');
+  };
+
+  const toggle = () => {
+    setUsdMode(v => !v);
+    setUsdValue('');
+    onChange('');
+  };
+
+  return (
+    <div>
+      <div style={{ position: 'relative' }}>
+        <input
+          style={{ ...inputStyle(), paddingRight: 58 }}
+          type="number" inputMode="decimal"
+          value={usdMode ? usdValue : value}
+          onChange={e => usdMode ? handleUsdChange(e.target.value) : onChange(e.target.value)}
+          placeholder={placeholder}
+        />
+        <button
+          type="button" className="tap-scale"
+          onClick={toggle}
+          disabled={!usdRate}
+          style={{
+            position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)',
+            padding: '5px 10px', borderRadius: 8, cursor: usdRate ? 'pointer' : 'not-allowed',
+            border: `1px solid ${usdMode ? THEME.blueSoft : THEME.border}`,
+            background: usdMode ? 'rgba(61,127,255,0.15)' : THEME.surface2,
+            color: usdMode ? THEME.blueSoft : THEME.mutedDim, fontSize: 11, fontFamily: 'Inter, sans-serif', fontWeight: 600,
+          }}
+        >
+          {usdMode ? '₽' : '$'}
+        </button>
+      </div>
+      {usdMode && (
+        <div style={{ color: THEME.mutedDim, fontSize: 11, fontFamily: 'Inter, sans-serif', marginTop: 5 }}>
+          {usdRate
+            ? `≈ ${fmt(Math.round(Number(usdValue || 0) * usdRate))} по курсу ЦБ ${usdRate.toFixed(2)} ₽/$`
+            : 'Курс доллара недоступен'}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PhotoPicker({ photo, onChange }) {
   const [busy, setBusy] = useState(false);
   const pick = async (e) => {
@@ -2127,7 +2286,7 @@ function PhotoPicker({ photo, onChange }) {
   );
 }
 
-function AccountModal({ onClose, onSubmit }) {
+function AccountModal({ onClose, onSubmit, usdRate }) {
   const [name, setName] = useState('');
   const [type, setType] = useState('card');
   const [balance, setBalance] = useState('');
@@ -2156,7 +2315,7 @@ function AccountModal({ onClose, onSubmit }) {
         })}
       </div>
       <label style={{ ...fieldLabel(), marginTop: 14 }}>Начальный баланс</label>
-      <input style={inputStyle()} type="number" inputMode="decimal" value={balance} onChange={e => setBalance(e.target.value)} placeholder="0" />
+      <FxAmountField value={balance} onChange={setBalance} usdRate={usdRate} />
       <label style={{ ...fieldLabel(), marginTop: 14 }}>Фото счёта (необязательно)</label>
       <PhotoPicker photo={photo} onChange={setPhoto} />
       <button className="tap-scale" style={submitBtn()} onClick={submit}>Добавить счёт</button>
@@ -2261,7 +2420,7 @@ function IconPicker({ value, onChange, color = THEME.blueSoft }) {
   );
 }
 
-function TxModal({ kind, accounts, categories, onCreateCategory, onClose, onSubmit }) {
+function TxModal({ kind, accounts, categories, onCreateCategory, onClose, onSubmit, usdRate }) {
   const [accountId, setAccountId] = useState(accounts[0]?.id || '');
   const [category, setCategory] = useState(categories[0]?.id || '');
   const [amount, setAmount] = useState('');
@@ -2322,7 +2481,7 @@ function TxModal({ kind, accounts, categories, onCreateCategory, onClose, onSubm
       )}
 
       <label style={{ ...fieldLabel(), marginTop: 14 }}>Сумма</label>
-      <input style={inputStyle()} type="number" inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0" />
+      <FxAmountField value={amount} onChange={setAmount} usdRate={usdRate} />
       <label style={{ ...fieldLabel(), marginTop: 14 }}>Дата</label>
       <input style={inputStyle()} type="date" value={date} onChange={e => setDate(e.target.value)} />
       <label style={{ ...fieldLabel(), marginTop: 14 }}>Заметка (необязательно)</label>
@@ -3149,7 +3308,7 @@ function RecurringForm({ accounts, categories, initial, onSubmit }) {
   );
 }
 
-function EditAccountModal({ account, onClose, onSave }) {
+function EditAccountModal({ account, onClose, onSave, usdRate }) {
   const [name, setName] = useState(account ? account.name : '');
   const [type, setType] = useState(account ? account.type : 'card');
   const [balance, setBalance] = useState(account ? String(account.balance) : '');
@@ -3179,7 +3338,7 @@ function EditAccountModal({ account, onClose, onSave }) {
         })}
       </div>
       <label style={{ ...fieldLabel(), marginTop: 14 }}>Баланс</label>
-      <input style={inputStyle()} type="number" inputMode="decimal" value={balance} onChange={e => setBalance(e.target.value)} />
+      <FxAmountField value={balance} onChange={setBalance} usdRate={usdRate} />
       <label style={{ ...fieldLabel(), marginTop: 14 }}>Фото счёта (необязательно)</label>
       <PhotoPicker photo={photo} onChange={setPhoto} />
       <button className="tap-scale" style={submitBtn()} onClick={submit}>Сохранить</button>
@@ -3187,7 +3346,7 @@ function EditAccountModal({ account, onClose, onSave }) {
   );
 }
 
-function EditTransactionModal({ tx, accounts, categories, onClose, onSave }) {
+function EditTransactionModal({ tx, accounts, categories, onClose, onSave, usdRate }) {
   const [accountId, setAccountId] = useState(tx ? tx.accountId : '');
   const [category, setCategory] = useState(tx ? tx.category : '');
   const [amount, setAmount] = useState(tx ? String(tx.amount) : '');
@@ -3225,7 +3384,7 @@ function EditTransactionModal({ tx, accounts, categories, onClose, onSave }) {
         })}
       </div>
       <label style={{ ...fieldLabel(), marginTop: 14 }}>Сумма</label>
-      <input style={inputStyle()} type="number" inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} />
+      <FxAmountField value={amount} onChange={setAmount} usdRate={usdRate} />
       <label style={{ ...fieldLabel(), marginTop: 14 }}>Дата</label>
       <input style={inputStyle()} type="date" value={date} onChange={e => setDate(e.target.value)} />
       <label style={{ ...fieldLabel(), marginTop: 14 }}>Заметка</label>
