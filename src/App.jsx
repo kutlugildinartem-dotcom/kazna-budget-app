@@ -22,7 +22,7 @@ import {
 } from 'recharts';
 import { Browser } from '@capacitor/browser';
 
-const APP_VERSION = '1.8.0';
+const APP_VERSION = '1.8.1';
 const UPDATE_REPO = 'kutlugildinartem-dotcom/kazna-budget-app';
 
 function isVersionNewer(latest, current) {
@@ -1010,8 +1010,10 @@ export default function BudgetApp() {
               {homeSections.transactions && transactions.length > 0 && (
                 <Section title="Последние операции" collapsible defaultOpen last>
                   <div style={{ padding: '4px 20px 8px' }}>
-                    <EarnSpendResultRow income={capitalFactors.totalIncome} expense={capitalFactors.totalExpense} net={capitalFactors.net} />
-                    <DayTotalsRow group={groupedTransactions[0]} />
+                    <EarnSpendResultRow
+                      income={groupedTransactions[0].income} expense={groupedTransactions[0].expense}
+                      net={groupedTransactions[0].income - groupedTransactions[0].expense}
+                    />
                     {groupedTransactions[0].items.slice(0, 4).map((t, i) => (
                       <TransactionRow key={t.id} tx={t} category={resolveCategory(t.category)} delay={i * 30} account={accounts.find(a => a.id === t.accountId)} onDelete={() => deleteTransaction(t)} onEdit={t.category === 'goal' ? undefined : () => setEditTxId(t.id)} />
                     ))}
