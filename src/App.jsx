@@ -22,7 +22,7 @@ import {
 } from 'recharts';
 import { Browser } from '@capacitor/browser';
 
-const APP_VERSION = '1.6.0';
+const APP_VERSION = '1.7.0';
 const UPDATE_REPO = 'kutlugildinartem-dotcom/kazna-budget-app';
 
 function isVersionNewer(latest, current) {
@@ -1005,6 +1005,27 @@ export default function BudgetApp() {
                     ))}
                   </div>
                 </Section>
+              )}
+
+              {transactions.length > 0 && (
+                <div className="anim-in" style={{ display: 'flex', gap: 10, padding: '4px 20px 8px' }}>
+                  <div style={{ flex: 1, minWidth: 0, padding: '14px', borderRadius: 16, background: 'rgba(52,211,153,0.12)', border: '1px solid rgba(52,211,153,0.3)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: THEME.green, fontSize: 11.5, fontFamily: 'Inter, sans-serif', fontWeight: 600 }}>
+                      <ArrowUpRight size={14} /> Заработано
+                    </div>
+                    <div style={{ color: THEME.text, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: bigNumberSize(fmt(capitalFactors.totalIncome), 18), marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {fmt(capitalFactors.totalIncome)}
+                    </div>
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0, padding: '14px', borderRadius: 16, background: 'rgba(251,113,133,0.12)', border: '1px solid rgba(251,113,133,0.3)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: THEME.red, fontSize: 11.5, fontFamily: 'Inter, sans-serif', fontWeight: 600 }}>
+                      <ArrowDownRight size={14} /> Потрачено
+                    </div>
+                    <div style={{ color: THEME.text, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: bigNumberSize(fmt(capitalFactors.totalExpense), 18), marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {fmt(capitalFactors.totalExpense)}
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
           )}
@@ -2183,28 +2204,6 @@ function LimitsSavingsCard({ data }) {
   );
 }
 
-function CandleShape(props) {
-  const { x, y, width, height, payload } = props;
-  if (!payload || height <= 0) return null;
-  const { open, close, high, low } = payload;
-  const isUp = close >= open;
-  const color = isUp ? THEME.green : THEME.red;
-  const range = (high - low) || 1;
-  const valueToY = (v) => y + ((high - v) / range) * height;
-  const openY = valueToY(open);
-  const closeY = valueToY(close);
-  const bodyTop = Math.min(openY, closeY);
-  const bodyHeight = Math.max(2, Math.abs(closeY - openY));
-  const cx = x + width / 2;
-  const bodyWidth = Math.max(4, width * 0.55);
-  return (
-    <g>
-      <line x1={cx} x2={cx} y1={y} y2={y + height} stroke={color} strokeWidth={1.4} />
-      <rect x={cx - bodyWidth / 2} y={bodyTop} width={bodyWidth} height={bodyHeight} fill={color} rx={1.5} />
-    </g>
-  );
-}
-
 function CapitalCandleTooltip({ active, payload, label }) {
   if (!active || !payload || !payload.length) return null;
   const p = payload[0].payload;
@@ -2223,9 +2222,16 @@ function CapitalCandleChart({ data }) {
     if (data.length === 0) return [0, 100];
     let min = Infinity, max = -Infinity;
     data.forEach(d => { min = Math.min(min, d.low); max = Math.max(max, d.high); });
-    const pad = (max - min) * 0.1 || Math.abs(max) * 0.05 || 10;
+    const pad = (max - min) * 0.15 || Math.abs(max) * 0.05 || 10;
     return [min - pad, max + pad];
   }, [data]);
+
+  const chartData = useMemo(() => data.map(d => ({
+    ...d,
+    base: d.low,
+    span: Math.max(d.high - d.low, (yMax - yMin) * 0.01),
+    isUp: d.close >= d.open,
+  })), [data, yMin, yMax]);
 
   const handleMove = (state) => {
     if (state && state.isTooltipActive && state.activePayload && state.activePayload.length) {
@@ -2242,12 +2248,15 @@ function CapitalCandleChart({ data }) {
 
   return (
     <ResponsiveContainer width="100%" height={170}>
-      <BarChart data={data} margin={{ top: 8, right: 8, left: -18, bottom: 0 }} onMouseMove={handleMove} onMouseLeave={() => setActive(null)}>
+      <BarChart data={chartData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }} onMouseMove={handleMove} onMouseLeave={() => setActive(null)}>
         <CartesianGrid stroke={THEME.border} vertical={false} />
         <XAxis dataKey="label" tick={{ fill: THEME.mutedDim, fontSize: 10 }} axisLine={{ stroke: THEME.border }} tickLine={false} />
         <YAxis domain={[yMin, yMax]} tick={{ fill: THEME.mutedDim, fontSize: 10 }} axisLine={false} tickLine={false} width={46} />
         <Tooltip content={<CapitalCandleTooltip />} cursor={false} />
-        <Bar dataKey="range" shape={CandleShape} isAnimationActive={false} maxBarSize={22} />
+        <Bar dataKey="base" stackId="candle" fill="transparent" isAnimationActive={false} />
+        <Bar dataKey="span" stackId="candle" isAnimationActive={false} maxBarSize={20} radius={[3, 3, 3, 3]}>
+          {chartData.map((d, i) => <Cell key={i} fill={d.isUp ? THEME.green : THEME.red} />)}
+        </Bar>
         {active && <ReferenceLine x={active.label} stroke={THEME.mutedDim} strokeDasharray="4 4" strokeWidth={1} />}
         {active && <ReferenceLine y={active.value} stroke={THEME.mutedDim} strokeDasharray="4 4" strokeWidth={1} />}
       </BarChart>
