@@ -14,15 +14,15 @@ import {
   Laptop, Smartphone, Headphones, Camera, Gamepad2, Banknote,
   Baby, Dog, Cat, Users,
   Palette, Scissors, Umbrella, TreePine, Building2, MapPin, Flag, Clock,
-  TrendingUp, TrendingDown, Calculator, ExternalLink
+  TrendingUp, TrendingDown, Calculator, ExternalLink, ArrowLeftRight
 } from 'lucide-react';
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  BarChart, Bar, Cell, ReferenceLine
+  BarChart, Bar, Cell, ReferenceLine, AreaChart, Area
 } from 'recharts';
 import { Browser } from '@capacitor/browser';
 
-const APP_VERSION = '1.9.0';
+const APP_VERSION = '1.10.0';
 const UPDATE_REPO = 'kutlugildinartem-dotcom/kazna-budget-app';
 
 function isVersionNewer(latest, current) {
@@ -160,6 +160,7 @@ const LIMITABLE_CATEGORIES = EXPENSE_CATEGORIES.filter(c => c.id !== 'goal');
 const ALL_CATEGORIES = [...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES];
 const findCategory = (id) => ALL_CATEGORIES.find(c => c.id === id) || ALL_CATEGORIES[ALL_CATEGORIES.length - 1];
 const ADJUSTMENT_CATEGORY = { id: 'adjustment', label: 'Корректировка счёта', icon: PencilLine, color: '#7c8aa5' };
+const TRANSFER_CATEGORY = { id: 'transfer', label: 'Перевод между счетами', icon: ArrowLeftRight, color: '#5c93ff' };
 
 const ICON_MAP = {
   utensils: Utensils, car: Car, home: Home, film: Film, heart: HeartPulse, shopping: ShoppingBag,
@@ -404,6 +405,7 @@ export default function BudgetApp() {
   const [recurringPayments, setRecurringPayments] = useState([]);
   const [notes, setNotes] = useState([]);
   const [balanceAdjustments, setBalanceAdjustments] = useState([]);
+  const [transfers, setTransfers] = useState([]);
   const [usdRate, setUsdRate] = useState(null);
   const [currency, setCurrency] = useState('₽');
   const [accentId, setAccentId] = useState('blue');
@@ -457,6 +459,7 @@ export default function BudgetApp() {
           setRecurringPayments(parsed.recurringPayments || []);
           setNotes(parsed.notes || []);
           setBalanceAdjustments(parsed.balanceAdjustments || []);
+          setTransfers(parsed.transfers || []);
           setCurrency(parsed.currency ?? '₽');
           setAccentId(parsed.accentId || 'blue');
           if (parsed.barItemIds) {
@@ -512,13 +515,13 @@ export default function BudgetApp() {
     (async () => {
       try {
         const res = await storageSet(STORAGE_KEY, JSON.stringify({
-          accounts, transactions, goals, limits, customCategories, shoppingItems, recurringPayments, notes, balanceAdjustments,
+          accounts, transactions, goals, limits, customCategories, shoppingItems, recurringPayments, notes, balanceAdjustments, transfers,
           currency, accentId, barItemIds, homeSections,
         }));
         setSaveError(!res);
       } catch (e) { setSaveError(true); }
     })();
-  }, [accounts, transactions, goals, limits, customCategories, shoppingItems, recurringPayments, notes, balanceAdjustments, currency, accentId, barItemIds, homeSections, loaded]);
+  }, [accounts, transactions, goals, limits, customCategories, shoppingItems, recurringPayments, notes, balanceAdjustments, transfers, currency, accentId, barItemIds, homeSections, loaded]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -744,6 +747,10 @@ export default function BudgetApp() {
         id: a.id, kind: 'adjustment', accountId: a.accountId, amount: Math.abs(a.delta),
         type: a.delta >= 0 ? 'income' : 'expense', date: a.date, createdAt: a.createdAt, note: '',
       })),
+      ...transfers.map(tr => ({
+        id: tr.id, kind: 'transfer', accountId: tr.fromAccountId, toAccountId: tr.toAccountId,
+        amount: tr.amount, type: 'transfer', date: tr.date, createdAt: tr.createdAt, note: '',
+      })),
     ];
     const sorted = combined.sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
     const groups = [];
@@ -752,10 +759,12 @@ export default function BudgetApp() {
       if (t.date !== lastKey) { groups.push({ date: t.date, items: [], income: 0, expense: 0 }); lastKey = t.date; }
       const g = groups[groups.length - 1];
       g.items.push(t);
-      if (t.type === 'income') g.income += t.amount; else g.expense += t.amount;
+      if (t.kind !== 'transfer') {
+        if (t.type === 'income') g.income += t.amount; else g.expense += t.amount;
+      }
     });
     return groups;
-  }, [transactions, balanceAdjustments]);
+  }, [transactions, balanceAdjustments, transfers]);
 
   function addAccount({ name, type, balance, photo }) {
     setAccounts(prev => [...prev, { id: uid(), name, type, balance: Number(balance) || 0, photo: photo || null }]);
@@ -764,12 +773,34 @@ export default function BudgetApp() {
     setAccounts(prev => prev.filter(a => a.id !== id));
     setTransactions(prev => prev.filter(t => t.accountId !== id));
     setBalanceAdjustments(prev => prev.filter(a => a.accountId !== id));
+    setTransfers(prev => prev.filter(t => t.fromAccountId !== id && t.toAccountId !== id));
   }
   function deleteBalanceAdjustment(id) {
     const adj = balanceAdjustments.find(a => a.id === id);
     if (!adj) return;
     setBalanceAdjustments(prev => prev.filter(a => a.id !== id));
     setAccounts(prev => prev.map(a => a.id === adj.accountId ? { ...a, balance: a.balance - adj.delta } : a));
+  }
+
+  function addTransfer({ fromAccountId, toAccountId, amount, date }) {
+    const amt = Number(amount);
+    if (!amt || amt <= 0 || !fromAccountId || !toAccountId || fromAccountId === toAccountId) return;
+    setAccounts(prev => prev.map(a => {
+      if (a.id === fromAccountId) return { ...a, balance: a.balance - amt };
+      if (a.id === toAccountId) return { ...a, balance: a.balance + amt };
+      return a;
+    }));
+    setTransfers(prev => [...prev, { id: uid(), fromAccountId, toAccountId, amount: amt, date: date || todayISO(), createdAt: Date.now() }]);
+  }
+  function deleteTransfer(id) {
+    const tr = transfers.find(t => t.id === id);
+    if (!tr) return;
+    setTransfers(prev => prev.filter(t => t.id !== id));
+    setAccounts(prev => prev.map(a => {
+      if (a.id === tr.fromAccountId) return { ...a, balance: a.balance + tr.amount };
+      if (a.id === tr.toAccountId) return { ...a, balance: a.balance - tr.amount };
+      return a;
+    }));
   }
   function addGoal({ name, target, iconKey }) {
     setGoals(prev => [...prev, { id: uid(), name, target: Number(target) || 0, current: 0, iconKey: iconKey || 'target' }]);
@@ -1029,7 +1060,15 @@ export default function BudgetApp() {
                       net={groupedTransactions[0].income - groupedTransactions[0].expense}
                     />
                     {groupedTransactions[0].items.slice(0, 4).map((t, i) => (
-                      <TransactionRow key={t.id} tx={t} category={t.kind === 'adjustment' ? ADJUSTMENT_CATEGORY : resolveCategory(t.category)} delay={i * 30} account={accounts.find(a => a.id === t.accountId)} onDelete={() => t.kind === 'adjustment' ? deleteBalanceAdjustment(t.id) : deleteTransaction(t)} onEdit={t.kind === 'adjustment' || t.category === 'goal' ? undefined : () => setEditTxId(t.id)} />
+                      <TransactionRow
+                        key={t.id} tx={t}
+                        category={t.kind === 'adjustment' ? ADJUSTMENT_CATEGORY : t.kind === 'transfer' ? TRANSFER_CATEGORY : resolveCategory(t.category)}
+                        delay={i * 30}
+                        account={accounts.find(a => a.id === t.accountId)}
+                        toAccount={t.kind === 'transfer' ? accounts.find(a => a.id === t.toAccountId) : undefined}
+                        onDelete={() => t.kind === 'adjustment' ? deleteBalanceAdjustment(t.id) : t.kind === 'transfer' ? deleteTransfer(t.id) : deleteTransaction(t)}
+                        onEdit={t.kind === 'adjustment' || t.kind === 'transfer' || t.category === 'goal' ? undefined : () => setEditTxId(t.id)}
+                      />
                     ))}
                   </div>
                 </Section>
@@ -1051,7 +1090,15 @@ export default function BudgetApp() {
                       </div>
                       <DayTotalsRow group={group} pill />
                       {group.items.map((t, i) => (
-                        <TransactionRow key={t.id} tx={t} category={t.kind === 'adjustment' ? ADJUSTMENT_CATEGORY : resolveCategory(t.category)} delay={i * 30} account={accounts.find(a => a.id === t.accountId)} onDelete={() => t.kind === 'adjustment' ? deleteBalanceAdjustment(t.id) : deleteTransaction(t)} onEdit={t.kind === 'adjustment' || t.category === 'goal' ? undefined : () => setEditTxId(t.id)} />
+                        <TransactionRow
+                        key={t.id} tx={t}
+                        category={t.kind === 'adjustment' ? ADJUSTMENT_CATEGORY : t.kind === 'transfer' ? TRANSFER_CATEGORY : resolveCategory(t.category)}
+                        delay={i * 30}
+                        account={accounts.find(a => a.id === t.accountId)}
+                        toAccount={t.kind === 'transfer' ? accounts.find(a => a.id === t.toAccountId) : undefined}
+                        onDelete={() => t.kind === 'adjustment' ? deleteBalanceAdjustment(t.id) : t.kind === 'transfer' ? deleteTransfer(t.id) : deleteTransaction(t)}
+                        onEdit={t.kind === 'adjustment' || t.kind === 'transfer' || t.category === 'goal' ? undefined : () => setEditTxId(t.id)}
+                      />
                       ))}
                     </div>
                   ))}
@@ -1065,7 +1112,14 @@ export default function BudgetApp() {
               <TabHeader title="Счета" />
               <AccountsShareBar accounts={accounts} />
               {accounts.length > 1 && (
-                <div style={{ padding: '0 20px 8px' }}>
+                <div style={{ padding: '0 20px 8px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <button className="tap-scale" onClick={() => setModal('transfer')} style={{
+                    width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '11px 14px', borderRadius: 14,
+                    cursor: 'pointer', border: `1px solid ${THEME.border}`, background: `linear-gradient(160deg, ${THEME.surface2}, ${THEME.surface})`,
+                  }}>
+                    <GlassIcon icon={ArrowLeftRight} color={THEME.blueSoft} size={32} iconSize={15} />
+                    <span style={{ color: THEME.text, fontFamily: 'Inter, sans-serif', fontWeight: 500, fontSize: 13 }}>Перевод между счетами</span>
+                  </button>
                   <button className="tap-scale" onClick={() => setModal('incomeSplit')} style={{
                     width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '11px 14px', borderRadius: 14,
                     cursor: 'pointer', border: `1px solid ${THEME.border}`, background: `linear-gradient(160deg, ${THEME.surface2}, ${THEME.surface})`,
@@ -1300,6 +1354,9 @@ export default function BudgetApp() {
             accounts={accounts} categories={allIncomeCategories}
             onSplit={splitIncomeAcrossAccounts} onClose={() => setModal(null)}
           />
+        )}
+        {modal === 'transfer' && (
+          <TransferModal accounts={accounts} onClose={() => setModal(null)} onSubmit={addTransfer} />
         )}
         {modal === 'recurring' && (
           <RecurringPaymentsModal
@@ -2223,20 +2280,19 @@ function CapitalCandleTooltip({ active, payload, label }) {
 function CapitalCandleChart({ data }) {
   const [active, setActive] = useState(null);
 
+  const trendColor = useMemo(() => {
+    if (data.length === 0) return THEME.blueSoft;
+    const net = data[data.length - 1].close - data[0].open;
+    return net > 0 ? THEME.green : net < 0 ? THEME.red : THEME.blueSoft;
+  }, [data]);
+
   const [yMin, yMax] = useMemo(() => {
     if (data.length === 0) return [0, 100];
     let min = Infinity, max = -Infinity;
-    data.forEach(d => { min = Math.min(min, d.low); max = Math.max(max, d.high); });
-    const pad = (max - min) * 0.15 || Math.abs(max) * 0.05 || 10;
+    data.forEach(d => { min = Math.min(min, d.close); max = Math.max(max, d.close); });
+    const pad = (max - min) * 0.2 || Math.abs(max) * 0.05 || 10;
     return [min - pad, max + pad];
   }, [data]);
-
-  const chartData = useMemo(() => data.map(d => ({
-    ...d,
-    base: d.low,
-    span: Math.max(d.high - d.low, (yMax - yMin) * 0.01),
-    color: d.close > d.open ? THEME.green : d.close < d.open ? THEME.red : THEME.mutedDim,
-  })), [data, yMin, yMax]);
 
   const handleMove = (state) => {
     if (state && state.isTooltipActive && state.activePayload && state.activePayload.length) {
@@ -2253,18 +2309,25 @@ function CapitalCandleChart({ data }) {
 
   return (
     <ResponsiveContainer width="100%" height={190}>
-      <BarChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} onMouseMove={handleMove} onMouseLeave={() => setActive(null)}>
+      <AreaChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} onMouseMove={handleMove} onMouseLeave={() => setActive(null)}>
+        <defs>
+          <linearGradient id="capitalFill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={trendColor} stopOpacity={0.35} />
+            <stop offset="100%" stopColor={trendColor} stopOpacity={0} />
+          </linearGradient>
+        </defs>
         <CartesianGrid stroke={THEME.border} vertical={false} />
-        <XAxis dataKey="label" tick={{ fill: THEME.mutedDim, fontSize: 10 }} axisLine={{ stroke: THEME.border }} tickLine={false} interval="preserveStartEnd" minTickGap={20} />
+        <XAxis dataKey="label" tick={{ fill: THEME.mutedDim, fontSize: 10 }} axisLine={{ stroke: THEME.border }} tickLine={false} interval="preserveStartEnd" minTickGap={24} />
         <YAxis domain={[yMin, yMax]} tick={{ fill: THEME.mutedDim, fontSize: 10 }} axisLine={false} tickLine={false} width={48} tickFormatter={compactNum} />
         <Tooltip content={<CapitalCandleTooltip />} cursor={false} />
-        <Bar dataKey="base" stackId="candle" fill="transparent" isAnimationActive={false} />
-        <Bar dataKey="span" stackId="candle" isAnimationActive={false} maxBarSize={18} radius={[3, 3, 3, 3]}>
-          {chartData.map((d, i) => <Cell key={i} fill={d.color} />)}
-        </Bar>
+        <Area
+          type="monotone" dataKey="close" stroke={trendColor} strokeWidth={2.5}
+          fill="url(#capitalFill)" isAnimationActive={false}
+          dot={false} activeDot={{ r: 4, fill: trendColor, stroke: THEME.surface, strokeWidth: 2 }}
+        />
         {active && <ReferenceLine x={active.label} stroke={THEME.mutedDim} strokeDasharray="4 4" strokeWidth={1} />}
         {active && <ReferenceLine y={active.value} stroke={THEME.mutedDim} strokeDasharray="4 4" strokeWidth={1} />}
-      </BarChart>
+      </AreaChart>
     </ResponsiveContainer>
   );
 }
@@ -2323,29 +2386,35 @@ function EarnSpendResultRow({ income, expense, net }) {
 
 function DayTotalsRow({ group, compact, pill }) {
   if (!group || (!group.income && !group.expense)) return null;
+  const net = group.income - group.expense;
+
+  if (pill) {
+    return (
+      <div style={{
+        display: 'inline-flex', alignItems: 'center', gap: 10, padding: '6px 12px', borderRadius: 999, marginBottom: 10,
+        background: THEME.surface2, border: `1px solid ${THEME.border}`, fontSize: 12, fontFamily: 'Inter, sans-serif', fontWeight: 600,
+      }}>
+        {group.income > 0 && <span style={{ color: THEME.green }}>+{fmt(group.income)}</span>}
+        <span style={{ color: THEME.cyan }}>{net >= 0 ? '+' : ''}{fmt(net)}</span>
+        {group.expense > 0 && <span style={{ color: THEME.red }}>−{fmt(group.expense)}</span>}
+      </div>
+    );
+  }
+
   const content = (
-    <span style={{ display: 'flex', gap: 10, fontSize: pill ? 12 : compact ? 11 : 12, fontFamily: 'Inter, sans-serif', fontWeight: 600, flexShrink: 0 }}>
+    <span style={{ display: 'flex', gap: 10, fontSize: compact ? 11 : 12, fontFamily: 'Inter, sans-serif', fontWeight: 600, flexShrink: 0 }}>
       {group.income > 0 && <span style={{ color: THEME.green }}>+{fmt(group.income)}</span>}
       {group.expense > 0 && <span style={{ color: THEME.red }}>−{fmt(group.expense)}</span>}
     </span>
   );
-  if (pill) {
-    return (
-      <div style={{
-        display: 'inline-flex', padding: '6px 12px', borderRadius: 999, marginBottom: 10,
-        background: THEME.surface2, border: `1px solid ${THEME.border}`,
-      }}>
-        {content}
-      </div>
-    );
-  }
   if (compact) return content;
   return <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>{content}</div>;
 }
 
-function TransactionRow({ tx, category, account, onDelete, onEdit, delay = 0 }) {
+function TransactionRow({ tx, category, account, toAccount, onDelete, onEdit, delay = 0 }) {
   const cat = category || findCategory(tx.category);
   const [confirming, setConfirming] = useState(false);
+  const isTransfer = tx.kind === 'transfer';
   const isIncome = tx.type === 'income';
   return (
     <div className="anim-in" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', animationDelay: `${delay}ms` }}>
@@ -2359,11 +2428,13 @@ function TransactionRow({ tx, category, account, onDelete, onEdit, delay = 0 }) 
             {cat.label}{tx.note ? ` · ${tx.note}` : ''}
           </div>
           <div style={{ color: THEME.mutedDim, fontSize: 11.5, fontFamily: 'Inter, sans-serif', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {account ? account.name : 'Счёт удалён'}
+            {isTransfer
+              ? `${account ? account.name : 'Счёт удалён'} → ${toAccount ? toAccount.name : 'Счёт удалён'}`
+              : (account ? account.name : 'Счёт удалён')}
           </div>
         </div>
-        <div style={{ fontFamily: 'Space Grotesk, sans-serif', fontWeight: 600, fontSize: 14, color: isIncome ? THEME.green : THEME.red, whiteSpace: 'nowrap' }}>
-          {isIncome ? '+' : '−'}{fmt(tx.amount)}
+        <div style={{ fontFamily: 'Space Grotesk, sans-serif', fontWeight: 600, fontSize: 14, color: isTransfer ? THEME.blueSoft : isIncome ? THEME.green : THEME.red, whiteSpace: 'nowrap' }}>
+          {isTransfer ? '' : isIncome ? '+' : '−'}{fmt(tx.amount)}
         </div>
       </button>
       <button
@@ -3471,6 +3542,52 @@ function ConfettiBurst({ onDone }) {
         />
       ))}
     </div>
+  );
+}
+
+function TransferModal({ accounts, onClose, onSubmit }) {
+  const [fromId, setFromId] = useState(accounts[0]?.id || '');
+  const [toId, setToId] = useState(accounts[1]?.id || accounts[0]?.id || '');
+  const [amount, setAmount] = useState('');
+  const [date, setDate] = useState(todayISO());
+
+  useEffect(() => {
+    if (toId === fromId) {
+      const alt = accounts.find(a => a.id !== fromId);
+      setToId(alt ? alt.id : '');
+    }
+  }, [fromId]);
+
+  if (accounts.length < 2) {
+    return (
+      <ModalShell title="Перевод между счетами" onClose={onClose}>
+        <div style={{ color: THEME.muted, fontSize: 13, fontFamily: 'Inter, sans-serif' }}>Нужно как минимум два счёта.</div>
+      </ModalShell>
+    );
+  }
+
+  const submit = () => {
+    if (!Number(amount) || !fromId || !toId || fromId === toId) return;
+    onSubmit({ fromAccountId: fromId, toAccountId: toId, amount, date });
+    onClose();
+  };
+
+  return (
+    <ModalShell title="Перевод между счетами" onClose={onClose}>
+      <label style={fieldLabel()}>Откуда</label>
+      <select style={inputStyle()} value={fromId} onChange={e => setFromId(e.target.value)}>
+        {accounts.map(a => <option key={a.id} value={a.id}>{a.name} · {fmt(a.balance)}</option>)}
+      </select>
+      <label style={{ ...fieldLabel(), marginTop: 14 }}>Куда</label>
+      <select style={inputStyle()} value={toId} onChange={e => setToId(e.target.value)}>
+        {accounts.filter(a => a.id !== fromId).map(a => <option key={a.id} value={a.id}>{a.name} · {fmt(a.balance)}</option>)}
+      </select>
+      <label style={{ ...fieldLabel(), marginTop: 14 }}>Сумма</label>
+      <FxAmountField value={amount} onChange={setAmount} usdRate={null} />
+      <label style={{ ...fieldLabel(), marginTop: 14 }}>Дата</label>
+      <input style={inputStyle()} type="date" value={date} onChange={e => setDate(e.target.value)} />
+      <button className="tap-scale" style={submitBtn()} onClick={submit}>Перевести</button>
+    </ModalShell>
   );
 }
 
