@@ -13,7 +13,8 @@ import {
   Stethoscope, Pill, Syringe, Activity,
   Laptop, Smartphone, Headphones, Camera, Gamepad2, Banknote,
   Baby, Dog, Cat, Users,
-  Palette, Scissors, Umbrella, TreePine, Building2, MapPin, Flag, Clock
+  Palette, Scissors, Umbrella, TreePine, Building2, MapPin, Flag, Clock,
+  TrendingUp, TrendingDown, Calculator, ExternalLink
 } from 'lucide-react';
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -21,7 +22,7 @@ import {
 } from 'recharts';
 import { Browser } from '@capacitor/browser';
 
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.6.0';
 const UPDATE_REPO = 'kutlugildinartem-dotcom/kazna-budget-app';
 
 function isVersionNewer(latest, current) {
@@ -422,6 +423,7 @@ export default function BudgetApp() {
   const [strikeId, setStrikeId] = useState(null);
   const [confettiKey, setConfettiKey] = useState(null);
   const prevGoalsRef = useRef({});
+  const lastCheckRef = useRef(0);
 
   function fireConfetti() {
     setConfettiKey(Date.now() + Math.random());
@@ -470,7 +472,10 @@ export default function BudgetApp() {
     return () => { cancelled = true; };
   }, []);
 
-  async function runUpdateCheck() {
+  async function runUpdateCheck(force) {
+    const THROTTLE_MS = 30 * 60 * 1000;
+    if (!force && Date.now() - lastCheckRef.current < THROTTLE_MS) return;
+    lastCheckRef.current = Date.now();
     setUpdateCheck({ status: 'checking' });
     try {
       const latest = await fetchLatestRelease();
@@ -488,11 +493,11 @@ export default function BudgetApp() {
 
   useEffect(() => {
     if (!loaded) return;
-    runUpdateCheck();
+    runUpdateCheck(true);
   }, [loaded]);
 
   useEffect(() => {
-    const onVisible = () => { if (document.visibilityState === 'visible' && loaded) runUpdateCheck(); };
+    const onVisible = () => { if (document.visibilityState === 'visible' && loaded) runUpdateCheck(false); };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [loaded]);
@@ -725,8 +730,10 @@ export default function BudgetApp() {
     const groups = [];
     let lastKey = null;
     sorted.forEach(t => {
-      if (t.date !== lastKey) { groups.push({ date: t.date, items: [] }); lastKey = t.date; }
-      groups[groups.length - 1].items.push(t);
+      if (t.date !== lastKey) { groups.push({ date: t.date, items: [], income: 0, expense: 0 }); lastKey = t.date; }
+      const g = groups[groups.length - 1];
+      g.items.push(t);
+      if (t.type === 'income') g.income += t.amount; else g.expense += t.amount;
     });
     return groups;
   }, [transactions]);
@@ -865,10 +872,10 @@ export default function BudgetApp() {
     setLimits(prev => { const next = { ...prev }; delete next[categoryId]; return next; });
   }
 
-  function addShoppingItem({ name, cost, categoryId, description, urgency }) {
+  function addShoppingItem({ name, cost, categoryId, description, urgency, link }) {
     setShoppingItems(prev => [...prev, {
       id: uid(), name, cost: cost ? Number(cost) : null, categoryId: categoryId || null,
-      description: description || '', urgency: urgency || 'normal', done: false,
+      description: description || '', urgency: urgency || 'normal', link: link || '', done: false,
       accountId: null, completedAt: null, createdAt: Date.now(),
     }]);
   }
@@ -992,6 +999,7 @@ export default function BudgetApp() {
               {homeSections.transactions && transactions.length > 0 && (
                 <Section title="Последние операции" collapsible defaultOpen last>
                   <div style={{ padding: '4px 20px 8px' }}>
+                    <DayTotalsRow group={groupedTransactions[0]} />
                     {groupedTransactions[0].items.slice(0, 4).map((t, i) => (
                       <TransactionRow key={t.id} tx={t} category={resolveCategory(t.category)} delay={i * 30} account={accounts.find(a => a.id === t.accountId)} onDelete={() => deleteTransaction(t)} onEdit={t.category === 'goal' ? undefined : () => setEditTxId(t.id)} />
                     ))}
@@ -1010,8 +1018,11 @@ export default function BudgetApp() {
                 <div style={{ padding: '4px 20px 8px' }}>
                   {groupedTransactions.map(group => (
                     <div key={group.date} style={{ marginBottom: 14 }}>
-                      <div style={{ color: THEME.mutedDim, fontSize: 11, fontFamily: 'Inter, sans-serif', textTransform: 'uppercase', letterSpacing: 0.5, margin: '6px 0' }}>
-                        {new Date(group.date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}
+                      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', margin: '6px 0' }}>
+                        <span style={{ color: THEME.mutedDim, fontSize: 11, fontFamily: 'Inter, sans-serif', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                          {new Date(group.date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}
+                        </span>
+                        <DayTotalsRow group={group} compact />
                       </div>
                       {group.items.map((t, i) => (
                         <TransactionRow key={t.id} tx={t} category={resolveCategory(t.category)} delay={i * 30} account={accounts.find(a => a.id === t.accountId)} onDelete={() => deleteTransaction(t)} onEdit={t.category === 'goal' ? undefined : () => setEditTxId(t.id)} />
@@ -1219,7 +1230,7 @@ export default function BudgetApp() {
         {modal === 'settings' && (
           <SettingsModal
             currency={currency} accentId={accentId} barItemIds={barItemIds} homeSections={homeSections}
-            updateCheck={updateCheck} onCheckUpdate={runUpdateCheck} onOpenUpdate={openUpdate} updateInfo={updateInfo}
+            updateCheck={updateCheck} onCheckUpdate={() => runUpdateCheck(true)} onOpenUpdate={openUpdate} updateInfo={updateInfo}
             onClose={() => setModal(null)}
             onSave={({ currency: c, accentId: a, homeSections: hs, barItemIds: b }) => {
               setCurrency(c); setAccentId(a); setHomeSections(hs); setBarItemIds(b);
@@ -1548,6 +1559,18 @@ function ShoppingItemCard({ item, categories, accentColor, delay = 0, onBuy, onD
           <div style={{ color: THEME.text, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap', flexShrink: 0 }}>{fmt(item.cost)}</div>
         )}
       </button>
+      {item.link && (
+        <button
+          className="tap-scale" type="button"
+          onClick={() => Browser.open({ url: item.link })}
+          style={{
+            width: 32, height: 32, borderRadius: 10, cursor: 'pointer', display: 'grid', placeItems: 'center', flexShrink: 0,
+            border: `1px solid ${THEME.cyan}55`, background: `${THEME.cyan}1a`, color: THEME.cyan,
+          }}
+        >
+          <ExternalLink size={14} />
+        </button>
+      )}
       <button
         className="tap-scale"
         onClick={() => confirming ? onDelete() : setConfirming(true)}
@@ -1596,10 +1619,11 @@ function ShoppingItemForm({ categories, onSubmit }) {
   const [categoryId, setCategoryId] = useState('');
   const [description, setDescription] = useState('');
   const [urgency, setUrgency] = useState('normal');
+  const [link, setLink] = useState('');
 
   const submit = () => {
     if (!name.trim()) return;
-    onSubmit({ name: name.trim(), cost: cost || null, categoryId: categoryId || null, description: description.trim(), urgency });
+    onSubmit({ name: name.trim(), cost: cost || null, categoryId: categoryId || null, description: description.trim(), urgency, link: link.trim() });
   };
 
   return (
@@ -1609,6 +1633,9 @@ function ShoppingItemForm({ categories, onSubmit }) {
 
       <label style={{ ...fieldLabel(), marginTop: 14 }}>Стоимость (необязательно)</label>
       <input style={inputStyle()} type="number" inputMode="decimal" value={cost} onChange={e => setCost(e.target.value)} placeholder="0" />
+
+      <label style={{ ...fieldLabel(), marginTop: 14 }}>Ссылка на товар (необязательно)</label>
+      <input style={inputStyle()} type="url" value={link} onChange={e => setLink(e.target.value)} placeholder="https://..." />
 
       <label style={{ ...fieldLabel(), marginTop: 14 }}>Срочность</label>
       <div style={{ display: 'flex', gap: 8 }}>
@@ -1980,23 +2007,43 @@ function FactorRow({ factor, negative }) {
   );
 }
 
+function bigNumberSize(str, base) {
+  const len = String(str).length;
+  if (len > 15) return base - 8;
+  if (len > 11) return base - 4;
+  if (len > 8) return base - 2;
+  return base;
+}
+
 function CapitalFactorsCard({ data, monthLabel }) {
+  const [expanded, setExpanded] = useState(false);
   const { totalIncome, totalExpense, net, income, expense } = data;
   const netPositive = net >= 0;
   const hasData = income.length > 0 || expense.length > 0;
+  const netStr = `${netPositive ? '+' : ''}${fmt(net)}`;
+  const NetIcon = netPositive ? TrendingUp : TrendingDown;
+  const netColor = netPositive ? THEME.green : THEME.red;
+
   return (
     <div className="anim-in" style={{
-      borderRadius: 18, padding: 16, marginBottom: 12,
+      borderRadius: 20, padding: 18, marginBottom: 14,
       background: `linear-gradient(160deg, ${THEME.surface2}, ${THEME.surface})`,
-      border: `1px solid ${THEME.border}`,
+      border: `1.5px solid ${netColor}33`,
+      boxShadow: `0 8px 28px ${netColor}14`,
     }}>
-      <div style={{ color: THEME.muted, fontSize: 12, fontFamily: 'Inter, sans-serif', marginBottom: 10, textTransform: 'capitalize' }}>
-        Изменение капитала · {monthLabel}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+        <div style={{ color: THEME.muted, fontSize: 12.5, fontFamily: 'Inter, sans-serif', textTransform: 'capitalize', fontWeight: 600 }}>
+          Изменение капитала · {monthLabel}
+        </div>
+        <GlassIcon icon={NetIcon} color={netColor} size={30} iconSize={15} />
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 14 }}>
-        <span style={{ fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: 26, color: netPositive ? THEME.green : THEME.red }}>
-          {netPositive ? '+' : ''}{fmt(net)}
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', margin: '6px 0 16px' }}>
+        <span style={{
+          fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, color: netColor,
+          fontSize: bigNumberSize(netStr, 32), lineHeight: 1.1,
+        }}>
+          {netStr}
         </span>
         {totalIncome > 0 && (
           <span style={{ color: THEME.mutedDim, fontSize: 12, fontFamily: 'Inter, sans-serif' }}>
@@ -2005,42 +2052,57 @@ function CapitalFactorsCard({ data, monthLabel }) {
         )}
       </div>
 
-      <div style={{ display: 'flex', gap: 10, marginBottom: hasData ? 16 : 0 }}>
-        <div style={{ flex: 1, padding: '10px 12px', borderRadius: 14, background: 'rgba(52,211,153,0.1)', border: '1px solid rgba(52,211,153,0.25)' }}>
+      <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
+        <div style={{ flex: 1, minWidth: 0, padding: '10px 12px', borderRadius: 14, background: 'rgba(52,211,153,0.1)', border: '1px solid rgba(52,211,153,0.25)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: THEME.green, fontSize: 11, fontFamily: 'Inter, sans-serif' }}>
             <ArrowUpRight size={13} /> Доход
           </div>
-          <div style={{ color: THEME.text, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: 16, marginTop: 2 }}>{fmt(totalIncome)}</div>
+          <div style={{ color: THEME.text, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: bigNumberSize(fmt(totalIncome), 16), marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{fmt(totalIncome)}</div>
         </div>
-        <div style={{ flex: 1, padding: '10px 12px', borderRadius: 14, background: 'rgba(251,113,133,0.1)', border: '1px solid rgba(251,113,133,0.25)' }}>
+        <div style={{ flex: 1, minWidth: 0, padding: '10px 12px', borderRadius: 14, background: 'rgba(251,113,133,0.1)', border: '1px solid rgba(251,113,133,0.25)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: THEME.red, fontSize: 11, fontFamily: 'Inter, sans-serif' }}>
             <ArrowDownRight size={13} /> Расход
           </div>
-          <div style={{ color: THEME.text, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: 16, marginTop: 2 }}>{fmt(totalExpense)}</div>
+          <div style={{ color: THEME.text, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: bigNumberSize(fmt(totalExpense), 16), marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{fmt(totalExpense)}</div>
         </div>
       </div>
 
-      {income.length > 0 && (
-        <div style={{ marginBottom: expense.length > 0 ? 14 : 0 }}>
-          <div style={{ color: THEME.mutedDim, fontSize: 10.5, fontFamily: 'Inter, sans-serif', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Источники дохода</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {income.map(f => <FactorRow key={f.label} factor={f} />)}
-          </div>
-        </div>
-      )}
-
-      {expense.length > 0 && (
-        <div>
-          <div style={{ color: THEME.mutedDim, fontSize: 10.5, fontFamily: 'Inter, sans-serif', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Куда ушли деньги</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {expense.map(f => <FactorRow key={f.label} factor={f} negative />)}
-          </div>
-        </div>
-      )}
-
-      {!hasData && (
+      {hasData ? (
+        <button
+          className="tap-scale" type="button" onClick={() => setExpanded(v => !v)}
+          style={{
+            width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, cursor: 'pointer',
+            padding: '9px 0', borderRadius: 12, border: `1px solid ${THEME.border}`, background: THEME.surface2,
+            color: THEME.blueSoft, fontSize: 12.5, fontFamily: 'Inter, sans-serif', fontWeight: 600,
+          }}
+        >
+          {expanded ? 'Скрыть по категориям' : 'Показать по категориям'}
+          <ChevronDown size={15} style={{ transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.3s cubic-bezier(.34,1.56,.64,1)' }} />
+        </button>
+      ) : (
         <div style={{ color: THEME.mutedDim, fontSize: 12.5, fontFamily: 'Inter, sans-serif', textAlign: 'center', padding: '4px 0' }}>
           В этом месяце операций ещё не было
+        </div>
+      )}
+
+      {expanded && (
+        <div className="anim-in" style={{ marginTop: 14 }}>
+          {income.length > 0 && (
+            <div style={{ marginBottom: expense.length > 0 ? 14 : 0 }}>
+              <div style={{ color: THEME.mutedDim, fontSize: 10.5, fontFamily: 'Inter, sans-serif', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Источники дохода</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {income.map(f => <FactorRow key={f.label} factor={f} />)}
+              </div>
+            </div>
+          )}
+          {expense.length > 0 && (
+            <div>
+              <div style={{ color: THEME.mutedDim, fontSize: 10.5, fontFamily: 'Inter, sans-serif', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Куда ушли деньги</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {expense.map(f => <FactorRow key={f.label} factor={f} negative />)}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -2206,6 +2268,18 @@ function ChartCard({ title, children }) {
   );
 }
 
+function DayTotalsRow({ group, compact }) {
+  if (!group || (!group.income && !group.expense)) return null;
+  const content = (
+    <span style={{ display: 'flex', gap: 8, fontSize: compact ? 11 : 12, fontFamily: 'Inter, sans-serif', fontWeight: 600, flexShrink: 0 }}>
+      {group.income > 0 && <span style={{ color: THEME.green }}>+{fmt(group.income)}</span>}
+      {group.expense > 0 && <span style={{ color: THEME.red }}>−{fmt(group.expense)}</span>}
+    </span>
+  );
+  if (compact) return content;
+  return <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>{content}</div>;
+}
+
 function TransactionRow({ tx, category, account, onDelete, onEdit, delay = 0 }) {
   const cat = category || findCategory(tx.category);
   const [confirming, setConfirming] = useState(false);
@@ -2305,9 +2379,144 @@ function ChoiceTile({ icon: Icon, label, color, onClick }) {
   );
 }
 
+function CalcKey({ label, onClick, kind, active, span2 }) {
+  const isOp = kind === 'op';
+  const isMuted = kind === 'muted';
+  const isEquals = kind === 'equals';
+  return (
+    <button
+      className="tap-scale" type="button" onClick={onClick}
+      style={{
+        gridColumn: span2 ? 'span 2' : undefined,
+        padding: '13px 0', borderRadius: 12, cursor: 'pointer', border: 'none',
+        fontFamily: 'Space Grotesk, sans-serif', fontWeight: 600, fontSize: 16,
+        background: isEquals
+          ? `linear-gradient(135deg, ${THEME.blueSoft}, ${THEME.blue})`
+          : isOp ? (active ? THEME.blueSoft : `${THEME.blueSoft}22`)
+          : isMuted ? THEME.surface : THEME.surface2,
+        color: isEquals ? '#fff' : isOp ? (active ? '#fff' : THEME.blueSoft) : isMuted ? THEME.mutedDim : THEME.text,
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+function MiniCalculatorModal({ initialValue, onApply, onClose }) {
+  const [display, setDisplay] = useState(initialValue && Number(initialValue) ? String(Number(initialValue)) : '0');
+  const [prev, setPrev] = useState(null);
+  const [op, setOp] = useState(null);
+  const [justEvaluated, setJustEvaluated] = useState(false);
+
+  const calc = (a, b, operator) => {
+    switch (operator) {
+      case '+': return a + b;
+      case '−': return a - b;
+      case '×': return a * b;
+      case '÷': return b !== 0 ? a / b : 0;
+      default: return b;
+    }
+  };
+  const round2 = (n) => Math.round(n * 100) / 100;
+
+  const inputDigit = (d) => {
+    if (justEvaluated) {
+      setDisplay(d === '.' ? '0.' : d);
+      setJustEvaluated(false);
+      return;
+    }
+    setDisplay(prevDisplay => {
+      if (d === '.') return prevDisplay.includes('.') ? prevDisplay : prevDisplay + '.';
+      if (prevDisplay === '0') return d;
+      if (prevDisplay.replace('.', '').length >= 12) return prevDisplay;
+      return prevDisplay + d;
+    });
+  };
+
+  const applyOp = (nextOp) => {
+    const current = Number(display);
+    if (prev !== null && op && !justEvaluated) {
+      const result = round2(calc(prev, current, op));
+      setPrev(result);
+      setDisplay(String(result));
+    } else {
+      setPrev(current);
+    }
+    setOp(nextOp);
+    setJustEvaluated(false);
+  };
+
+  const equals = () => {
+    if (prev === null || !op) return;
+    const current = Number(display);
+    const result = round2(calc(prev, current, op));
+    setDisplay(String(result));
+    setPrev(null);
+    setOp(null);
+    setJustEvaluated(true);
+  };
+
+  const percent = () => {
+    const current = Number(display);
+    setDisplay(String(prev !== null && op ? round2(prev * current / 100) : round2(current / 100)));
+  };
+
+  const clear = () => { setDisplay('0'); setPrev(null); setOp(null); setJustEvaluated(false); };
+  const backspace = () => setDisplay(d => (d.length > 1 ? d.slice(0, -1) : '0'));
+
+  const applyAndClose = () => {
+    const val = Math.abs(Number(display) || 0);
+    onApply(String(val));
+    onClose();
+  };
+
+  return (
+    <PopupShell onClose={onClose}>
+      <div style={{ textAlign: 'center', color: THEME.text, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: 16, marginBottom: 14 }}>
+        Калькулятор
+      </div>
+      <div style={{
+        textAlign: 'right', fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: bigNumberSize(display, 28),
+        color: THEME.text, padding: '6px 4px 14px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+      }}>
+        {display}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 12 }}>
+        <CalcKey label="C" onClick={clear} kind="muted" />
+        <CalcKey label="⌫" onClick={backspace} kind="muted" />
+        <CalcKey label="%" onClick={percent} kind="muted" />
+        <CalcKey label="÷" onClick={() => applyOp('÷')} kind="op" active={op === '÷' && !justEvaluated} />
+
+        <CalcKey label="7" onClick={() => inputDigit('7')} />
+        <CalcKey label="8" onClick={() => inputDigit('8')} />
+        <CalcKey label="9" onClick={() => inputDigit('9')} />
+        <CalcKey label="×" onClick={() => applyOp('×')} kind="op" active={op === '×' && !justEvaluated} />
+
+        <CalcKey label="4" onClick={() => inputDigit('4')} />
+        <CalcKey label="5" onClick={() => inputDigit('5')} />
+        <CalcKey label="6" onClick={() => inputDigit('6')} />
+        <CalcKey label="−" onClick={() => applyOp('−')} kind="op" active={op === '−' && !justEvaluated} />
+
+        <CalcKey label="1" onClick={() => inputDigit('1')} />
+        <CalcKey label="2" onClick={() => inputDigit('2')} />
+        <CalcKey label="3" onClick={() => inputDigit('3')} />
+        <CalcKey label="+" onClick={() => applyOp('+')} kind="op" active={op === '+' && !justEvaluated} />
+
+        <CalcKey label="0" onClick={() => inputDigit('0')} span2 />
+        <CalcKey label="." onClick={() => inputDigit('.')} />
+        <CalcKey label="=" onClick={equals} kind="equals" />
+      </div>
+      <button className="tap-scale" type="button" onClick={applyAndClose} style={submitBtn()}>
+        Использовать {fmt(Math.abs(Number(display) || 0))}
+      </button>
+    </PopupShell>
+  );
+}
+
 function FxAmountField({ value, onChange, usdRate, placeholder = '0' }) {
   const [usdMode, setUsdMode] = useState(false);
   const [usdValue, setUsdValue] = useState('');
+  const [calcOpen, setCalcOpen] = useState(false);
 
   const handleUsdChange = (v) => {
     setUsdValue(v);
@@ -2315,35 +2524,37 @@ function FxAmountField({ value, onChange, usdRate, placeholder = '0' }) {
     else onChange('');
   };
 
-  const toggle = () => {
+  const toggleUsd = () => {
     setUsdMode(v => !v);
     setUsdValue('');
     onChange('');
   };
 
+  const utilBtnStyle = (active) => ({
+    width: 46, flexShrink: 0, borderRadius: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+    border: `1px solid ${THEME.cyan}${active ? '99' : '40'}`,
+    background: active ? `${THEME.cyan}2e` : `${THEME.cyan}14`,
+    color: THEME.cyan,
+  });
+
   return (
     <div>
-      <div style={{ position: 'relative' }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
         <input
-          style={{ ...inputStyle(), paddingRight: 58 }}
+          style={{ ...inputStyle(), flex: 1, minWidth: 0 }}
           type="number" inputMode="decimal"
           value={usdMode ? usdValue : value}
           onChange={e => usdMode ? handleUsdChange(e.target.value) : onChange(e.target.value)}
           placeholder={placeholder}
         />
         <button
-          type="button" className="tap-scale"
-          onClick={toggle}
-          disabled={!usdRate}
-          style={{
-            position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)',
-            padding: '5px 10px', borderRadius: 8, cursor: usdRate ? 'pointer' : 'not-allowed',
-            border: `1px solid ${usdMode ? THEME.blueSoft : THEME.border}`,
-            background: usdMode ? 'rgba(61,127,255,0.15)' : THEME.surface2,
-            color: usdMode ? THEME.blueSoft : THEME.mutedDim, fontSize: 11, fontFamily: 'Inter, sans-serif', fontWeight: 600,
-          }}
+          type="button" className="tap-scale" onClick={toggleUsd} disabled={!usdRate}
+          style={{ ...utilBtnStyle(usdMode), fontSize: 13, fontFamily: 'Inter, sans-serif', fontWeight: 700, opacity: usdRate ? 1 : 0.4 }}
         >
           {usdMode ? '₽' : '$'}
+        </button>
+        <button type="button" className="tap-scale" onClick={() => setCalcOpen(true)} style={utilBtnStyle(false)}>
+          <Calculator size={17} />
         </button>
       </div>
       {usdMode && (
@@ -2352,6 +2563,13 @@ function FxAmountField({ value, onChange, usdRate, placeholder = '0' }) {
             ? `≈ ${fmt(Math.round(Number(usdValue || 0) * usdRate))} по курсу ЦБ ${usdRate.toFixed(2)} ₽/$`
             : 'Курс доллара недоступен'}
         </div>
+      )}
+      {calcOpen && (
+        <MiniCalculatorModal
+          initialValue={value}
+          onApply={(v) => { onChange(v); setUsdMode(false); setUsdValue(''); }}
+          onClose={() => setCalcOpen(false)}
+        />
       )}
     </div>
   );
