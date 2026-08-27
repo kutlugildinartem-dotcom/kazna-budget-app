@@ -22,7 +22,7 @@ import {
 } from 'recharts';
 import { Browser } from '@capacitor/browser';
 
-const APP_VERSION = '1.10.0';
+const APP_VERSION = '1.11.0';
 const UPDATE_REPO = 'kutlugildinartem-dotcom/kazna-budget-app';
 
 function isVersionNewer(latest, current) {
@@ -747,10 +747,6 @@ export default function BudgetApp() {
         id: a.id, kind: 'adjustment', accountId: a.accountId, amount: Math.abs(a.delta),
         type: a.delta >= 0 ? 'income' : 'expense', date: a.date, createdAt: a.createdAt, note: '',
       })),
-      ...transfers.map(tr => ({
-        id: tr.id, kind: 'transfer', accountId: tr.fromAccountId, toAccountId: tr.toAccountId,
-        amount: tr.amount, type: 'transfer', date: tr.date, createdAt: tr.createdAt, note: '',
-      })),
     ];
     const sorted = combined.sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
     const groups = [];
@@ -759,9 +755,7 @@ export default function BudgetApp() {
       if (t.date !== lastKey) { groups.push({ date: t.date, items: [], income: 0, expense: 0 }); lastKey = t.date; }
       const g = groups[groups.length - 1];
       g.items.push(t);
-      if (t.kind !== 'transfer') {
-        if (t.type === 'income') g.income += t.amount; else g.expense += t.amount;
-      }
+      if (t.type === 'income') g.income += t.amount; else g.expense += t.amount;
     });
     return groups;
   }, [transactions, balanceAdjustments, transfers]);
@@ -1133,6 +1127,16 @@ export default function BudgetApp() {
                 {accounts.map((a, i) => <AccountCard key={a.id} account={a} delay={i * 40} onDelete={() => deleteAccount(a.id)} onEdit={() => setEditAccountId(a.id)} />)}
                 <AddTile label="Новый счёт" full onClick={() => setModal('account')} />
               </div>
+
+              {transfers.length > 0 && (
+                <Section title="История переводов" collapsible defaultOpen={false} last>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '4px 20px 8px' }}>
+                    {[...transfers].sort((a, b) => b.createdAt - a.createdAt).map((tr, i) => (
+                      <TransferRow key={tr.id} transfer={tr} accounts={accounts} delay={i * 30} onDelete={() => deleteTransfer(tr.id)} />
+                    ))}
+                  </div>
+                </Section>
+              )}
             </div>
           )}
 
@@ -1879,6 +1883,37 @@ function AccountsShareBar({ accounts }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function TransferRow({ transfer, accounts, delay = 0, onDelete }) {
+  const [confirming, setConfirming] = useState(false);
+  const from = accounts.find(a => a.id === transfer.fromAccountId);
+  const to = accounts.find(a => a.id === transfer.toAccountId);
+  return (
+    <div className="anim-in" style={{
+      display: 'flex', alignItems: 'center', gap: 12, padding: 12, borderRadius: 16, animationDelay: `${delay}ms`,
+      background: `linear-gradient(160deg, ${THEME.surface2}, ${THEME.surface})`, border: `1px solid ${THEME.border}`,
+    }}>
+      <GlassIcon icon={ArrowLeftRight} color={THEME.blueSoft} size={38} iconSize={17} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ color: THEME.text, fontSize: 13.5, fontFamily: 'Inter, sans-serif', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {from ? from.name : 'Счёт удалён'} → {to ? to.name : 'Счёт удалён'}
+        </div>
+        <div style={{ color: THEME.mutedDim, fontSize: 11.5, fontFamily: 'Inter, sans-serif', marginTop: 1 }}>
+          {new Date(transfer.date + 'T00:00:00').toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}
+        </div>
+      </div>
+      <div style={{ color: THEME.blueSoft, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 600, fontSize: 14, whiteSpace: 'nowrap' }}>{fmt(transfer.amount)}</div>
+      <button
+        className="tap-scale"
+        onClick={() => confirming ? onDelete() : setConfirming(true)}
+        onBlur={() => setConfirming(false)}
+        style={{ background: 'none', border: 'none', cursor: 'pointer', color: confirming ? THEME.red : THEME.mutedDim, padding: 2 }}
+      >
+        <Trash2 size={14} />
+      </button>
     </div>
   );
 }
