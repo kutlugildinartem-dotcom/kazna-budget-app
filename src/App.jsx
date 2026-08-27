@@ -22,7 +22,7 @@ import {
 } from 'recharts';
 import { Browser } from '@capacitor/browser';
 
-const APP_VERSION = '1.8.1';
+const APP_VERSION = '1.9.0';
 const UPDATE_REPO = 'kutlugildinartem-dotcom/kazna-budget-app';
 
 function isVersionNewer(latest, current) {
@@ -159,6 +159,7 @@ const ACCENT_THEMES = [
 const LIMITABLE_CATEGORIES = EXPENSE_CATEGORIES.filter(c => c.id !== 'goal');
 const ALL_CATEGORIES = [...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES];
 const findCategory = (id) => ALL_CATEGORIES.find(c => c.id === id) || ALL_CATEGORIES[ALL_CATEGORIES.length - 1];
+const ADJUSTMENT_CATEGORY = { id: 'adjustment', label: 'Корректировка счёта', icon: PencilLine, color: '#7c8aa5' };
 
 const ICON_MAP = {
   utensils: Utensils, car: Car, home: Home, film: Film, heart: HeartPulse, shopping: ShoppingBag,
@@ -737,7 +738,14 @@ export default function BudgetApp() {
   }, [limits, spentByCategory, limitableCategories]);
 
   const groupedTransactions = useMemo(() => {
-    const sorted = [...transactions].sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
+    const combined = [
+      ...transactions.map(t => ({ ...t, kind: 'tx' })),
+      ...balanceAdjustments.map(a => ({
+        id: a.id, kind: 'adjustment', accountId: a.accountId, amount: Math.abs(a.delta),
+        type: a.delta >= 0 ? 'income' : 'expense', date: a.date, createdAt: a.createdAt, note: '',
+      })),
+    ];
+    const sorted = combined.sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
     const groups = [];
     let lastKey = null;
     sorted.forEach(t => {
@@ -747,7 +755,7 @@ export default function BudgetApp() {
       if (t.type === 'income') g.income += t.amount; else g.expense += t.amount;
     });
     return groups;
-  }, [transactions]);
+  }, [transactions, balanceAdjustments]);
 
   function addAccount({ name, type, balance, photo }) {
     setAccounts(prev => [...prev, { id: uid(), name, type, balance: Number(balance) || 0, photo: photo || null }]);
@@ -756,6 +764,12 @@ export default function BudgetApp() {
     setAccounts(prev => prev.filter(a => a.id !== id));
     setTransactions(prev => prev.filter(t => t.accountId !== id));
     setBalanceAdjustments(prev => prev.filter(a => a.accountId !== id));
+  }
+  function deleteBalanceAdjustment(id) {
+    const adj = balanceAdjustments.find(a => a.id === id);
+    if (!adj) return;
+    setBalanceAdjustments(prev => prev.filter(a => a.id !== id));
+    setAccounts(prev => prev.map(a => a.id === adj.accountId ? { ...a, balance: a.balance - adj.delta } : a));
   }
   function addGoal({ name, target, iconKey }) {
     setGoals(prev => [...prev, { id: uid(), name, target: Number(target) || 0, current: 0, iconKey: iconKey || 'target' }]);
@@ -1015,7 +1029,7 @@ export default function BudgetApp() {
                       net={groupedTransactions[0].income - groupedTransactions[0].expense}
                     />
                     {groupedTransactions[0].items.slice(0, 4).map((t, i) => (
-                      <TransactionRow key={t.id} tx={t} category={resolveCategory(t.category)} delay={i * 30} account={accounts.find(a => a.id === t.accountId)} onDelete={() => deleteTransaction(t)} onEdit={t.category === 'goal' ? undefined : () => setEditTxId(t.id)} />
+                      <TransactionRow key={t.id} tx={t} category={t.kind === 'adjustment' ? ADJUSTMENT_CATEGORY : resolveCategory(t.category)} delay={i * 30} account={accounts.find(a => a.id === t.accountId)} onDelete={() => t.kind === 'adjustment' ? deleteBalanceAdjustment(t.id) : deleteTransaction(t)} onEdit={t.kind === 'adjustment' || t.category === 'goal' ? undefined : () => setEditTxId(t.id)} />
                     ))}
                   </div>
                 </Section>
@@ -1032,14 +1046,12 @@ export default function BudgetApp() {
                 <div style={{ padding: '4px 20px 8px' }}>
                   {groupedTransactions.map(group => (
                     <div key={group.date} style={{ marginBottom: 14 }}>
-                      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', margin: '6px 0' }}>
-                        <span style={{ color: THEME.mutedDim, fontSize: 11, fontFamily: 'Inter, sans-serif', textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                          {new Date(group.date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}
-                        </span>
-                        <DayTotalsRow group={group} compact />
+                      <div style={{ color: THEME.mutedDim, fontSize: 11, fontFamily: 'Inter, sans-serif', textTransform: 'uppercase', letterSpacing: 0.5, margin: '6px 0 8px' }}>
+                        {new Date(group.date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}
                       </div>
+                      <DayTotalsRow group={group} pill />
                       {group.items.map((t, i) => (
-                        <TransactionRow key={t.id} tx={t} category={resolveCategory(t.category)} delay={i * 30} account={accounts.find(a => a.id === t.accountId)} onDelete={() => deleteTransaction(t)} onEdit={t.category === 'goal' ? undefined : () => setEditTxId(t.id)} />
+                        <TransactionRow key={t.id} tx={t} category={t.kind === 'adjustment' ? ADJUSTMENT_CATEGORY : resolveCategory(t.category)} delay={i * 30} account={accounts.find(a => a.id === t.accountId)} onDelete={() => t.kind === 'adjustment' ? deleteBalanceAdjustment(t.id) : deleteTransaction(t)} onEdit={t.kind === 'adjustment' || t.category === 'goal' ? undefined : () => setEditTxId(t.id)} />
                       ))}
                     </div>
                   ))}
@@ -2309,14 +2321,24 @@ function EarnSpendResultRow({ income, expense, net }) {
   );
 }
 
-function DayTotalsRow({ group, compact }) {
+function DayTotalsRow({ group, compact, pill }) {
   if (!group || (!group.income && !group.expense)) return null;
   const content = (
-    <span style={{ display: 'flex', gap: 8, fontSize: compact ? 11 : 12, fontFamily: 'Inter, sans-serif', fontWeight: 600, flexShrink: 0 }}>
+    <span style={{ display: 'flex', gap: 10, fontSize: pill ? 12 : compact ? 11 : 12, fontFamily: 'Inter, sans-serif', fontWeight: 600, flexShrink: 0 }}>
       {group.income > 0 && <span style={{ color: THEME.green }}>+{fmt(group.income)}</span>}
       {group.expense > 0 && <span style={{ color: THEME.red }}>−{fmt(group.expense)}</span>}
     </span>
   );
+  if (pill) {
+    return (
+      <div style={{
+        display: 'inline-flex', padding: '6px 12px', borderRadius: 999, marginBottom: 10,
+        background: THEME.surface2, border: `1px solid ${THEME.border}`,
+      }}>
+        {content}
+      </div>
+    );
+  }
   if (compact) return content;
   return <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>{content}</div>;
 }
