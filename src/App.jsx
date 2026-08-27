@@ -22,7 +22,7 @@ import {
 } from 'recharts';
 import { Browser } from '@capacitor/browser';
 
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.8.0';
 const UPDATE_REPO = 'kutlugildinartem-dotcom/kazna-budget-app';
 
 function isVersionNewer(latest, current) {
@@ -630,33 +630,44 @@ export default function BudgetApp() {
       ...transactions.map(t => ({ date: t.date, createdAt: t.createdAt, delta: t.type === 'income' ? t.amount : -t.amount })),
       ...balanceAdjustments.map(a => ({ date: a.date, createdAt: a.createdAt, delta: a.delta })),
     ].sort((a, b) => a.date.localeCompare(b.date) || a.createdAt - b.createdAt);
-    if (events.length === 0) return [];
+
     const netAll = events.reduce((s, e) => s + e.delta, 0);
-    let running = totalBalance - netAll;
+    const historyStart = totalBalance - netAll;
+
+    const today = new Date();
+    const year = today.getFullYear(), month = today.getMonth();
+    const todayDay = today.getDate();
+    const monthStartStr = `${year}-${String(month + 1).padStart(2, '0')}-01`;
+
     const byDate = {};
-    const order = [];
     events.forEach(e => {
-      const before = running;
-      running += e.delta;
-      const after = running;
-      if (!byDate[e.date]) {
-        byDate[e.date] = { date: e.date, open: before, high: Math.max(before, after), low: Math.min(before, after), close: after };
-        order.push(e.date);
-      } else {
-        const d = byDate[e.date];
-        d.close = after;
-        d.high = Math.max(d.high, before, after);
-        d.low = Math.min(d.low, before, after);
-      }
+      if (!byDate[e.date]) byDate[e.date] = [];
+      byDate[e.date].push(e);
     });
-    return order.map(date => {
-      const d = byDate[date];
-      return {
-        ...d,
-        range: [Math.round(d.low * 100) / 100, Math.round(d.high * 100) / 100],
-        label: new Date(date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }),
-      };
-    });
+
+    let running = historyStart;
+    events.forEach(e => { if (e.date < monthStartStr) running += e.delta; });
+
+    const result = [];
+    for (let d = 1; d <= todayDay; d++) {
+      const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      const open = running;
+      let high = open, low = open, close = open;
+      (byDate[dateStr] || []).forEach(e => {
+        const before = running;
+        running += e.delta;
+        const after = running;
+        high = Math.max(high, before, after);
+        low = Math.min(low, before, after);
+        close = after;
+      });
+      result.push({
+        date: dateStr, open, high, low, close,
+        range: [Math.round(low * 100) / 100, Math.round(high * 100) / 100],
+        label: new Date(dateStr + 'T00:00:00').toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }),
+      });
+    }
+    return result;
   }, [transactions, balanceAdjustments, totalBalance]);
 
   const accountFlowThisMonth = useMemo(() => {
@@ -999,33 +1010,13 @@ export default function BudgetApp() {
               {homeSections.transactions && transactions.length > 0 && (
                 <Section title="Последние операции" collapsible defaultOpen last>
                   <div style={{ padding: '4px 20px 8px' }}>
+                    <EarnSpendResultRow income={capitalFactors.totalIncome} expense={capitalFactors.totalExpense} net={capitalFactors.net} />
                     <DayTotalsRow group={groupedTransactions[0]} />
                     {groupedTransactions[0].items.slice(0, 4).map((t, i) => (
                       <TransactionRow key={t.id} tx={t} category={resolveCategory(t.category)} delay={i * 30} account={accounts.find(a => a.id === t.accountId)} onDelete={() => deleteTransaction(t)} onEdit={t.category === 'goal' ? undefined : () => setEditTxId(t.id)} />
                     ))}
                   </div>
                 </Section>
-              )}
-
-              {transactions.length > 0 && (
-                <div className="anim-in" style={{ display: 'flex', gap: 10, padding: '4px 20px 8px' }}>
-                  <div style={{ flex: 1, minWidth: 0, padding: '14px', borderRadius: 16, background: 'rgba(52,211,153,0.12)', border: '1px solid rgba(52,211,153,0.3)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: THEME.green, fontSize: 11.5, fontFamily: 'Inter, sans-serif', fontWeight: 600 }}>
-                      <ArrowUpRight size={14} /> Заработано
-                    </div>
-                    <div style={{ color: THEME.text, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: bigNumberSize(fmt(capitalFactors.totalIncome), 18), marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {fmt(capitalFactors.totalIncome)}
-                    </div>
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0, padding: '14px', borderRadius: 16, background: 'rgba(251,113,133,0.12)', border: '1px solid rgba(251,113,133,0.3)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: THEME.red, fontSize: 11.5, fontFamily: 'Inter, sans-serif', fontWeight: 600 }}>
-                      <ArrowDownRight size={14} /> Потрачено
-                    </div>
-                    <div style={{ color: THEME.text, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: bigNumberSize(fmt(capitalFactors.totalExpense), 18), marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {fmt(capitalFactors.totalExpense)}
-                    </div>
-                  </div>
-                </div>
               )}
             </div>
           )}
@@ -2230,7 +2221,7 @@ function CapitalCandleChart({ data }) {
     ...d,
     base: d.low,
     span: Math.max(d.high - d.low, (yMax - yMin) * 0.01),
-    isUp: d.close >= d.open,
+    color: d.close > d.open ? THEME.green : d.close < d.open ? THEME.red : THEME.mutedDim,
   })), [data, yMin, yMax]);
 
   const handleMove = (state) => {
@@ -2247,15 +2238,15 @@ function CapitalCandleChart({ data }) {
   }
 
   return (
-    <ResponsiveContainer width="100%" height={170}>
-      <BarChart data={chartData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }} onMouseMove={handleMove} onMouseLeave={() => setActive(null)}>
+    <ResponsiveContainer width="100%" height={190}>
+      <BarChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} onMouseMove={handleMove} onMouseLeave={() => setActive(null)}>
         <CartesianGrid stroke={THEME.border} vertical={false} />
-        <XAxis dataKey="label" tick={{ fill: THEME.mutedDim, fontSize: 10 }} axisLine={{ stroke: THEME.border }} tickLine={false} />
-        <YAxis domain={[yMin, yMax]} tick={{ fill: THEME.mutedDim, fontSize: 10 }} axisLine={false} tickLine={false} width={46} />
+        <XAxis dataKey="label" tick={{ fill: THEME.mutedDim, fontSize: 10 }} axisLine={{ stroke: THEME.border }} tickLine={false} interval="preserveStartEnd" minTickGap={20} />
+        <YAxis domain={[yMin, yMax]} tick={{ fill: THEME.mutedDim, fontSize: 10 }} axisLine={false} tickLine={false} width={48} tickFormatter={compactNum} />
         <Tooltip content={<CapitalCandleTooltip />} cursor={false} />
         <Bar dataKey="base" stackId="candle" fill="transparent" isAnimationActive={false} />
-        <Bar dataKey="span" stackId="candle" isAnimationActive={false} maxBarSize={20} radius={[3, 3, 3, 3]}>
-          {chartData.map((d, i) => <Cell key={i} fill={d.isUp ? THEME.green : THEME.red} />)}
+        <Bar dataKey="span" stackId="candle" isAnimationActive={false} maxBarSize={18} radius={[3, 3, 3, 3]}>
+          {chartData.map((d, i) => <Cell key={i} fill={d.color} />)}
         </Bar>
         {active && <ReferenceLine x={active.label} stroke={THEME.mutedDim} strokeDasharray="4 4" strokeWidth={1} />}
         {active && <ReferenceLine y={active.value} stroke={THEME.mutedDim} strokeDasharray="4 4" strokeWidth={1} />}
@@ -2273,6 +2264,45 @@ function ChartCard({ title, children }) {
     }}>
       <div style={{ color: THEME.muted, fontSize: 12, fontFamily: 'Inter, sans-serif', marginLeft: 6, marginBottom: 4 }}>{title}</div>
       {children}
+    </div>
+  );
+}
+
+function homeBoxFontSize(str) {
+  const len = String(str).length;
+  if (len > 13) return 12;
+  if (len > 9) return 13.5;
+  return 15;
+}
+
+function EarnSpendResultRow({ income, expense, net }) {
+  const netPositive = net >= 0;
+  return (
+    <div className="anim-in" style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+      <div style={{ flex: 1, minWidth: 0, padding: '11px 10px', borderRadius: 14, background: 'rgba(52,211,153,0.12)', border: '1px solid rgba(52,211,153,0.3)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: THEME.green, fontSize: 10.5, fontFamily: 'Inter, sans-serif', fontWeight: 600 }}>
+          <ArrowUpRight size={12} /> Заработано
+        </div>
+        <div style={{ color: THEME.text, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: homeBoxFontSize(fmt(income)), marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {fmt(income)}
+        </div>
+      </div>
+      <div style={{ flex: 1, minWidth: 0, padding: '11px 10px', borderRadius: 14, background: `${THEME.cyan}1f`, border: `1px solid ${THEME.cyan}55` }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: THEME.cyan, fontSize: 10.5, fontFamily: 'Inter, sans-serif', fontWeight: 600 }}>
+          <Wallet size={12} /> Результат
+        </div>
+        <div style={{ color: netPositive ? THEME.green : THEME.red, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: homeBoxFontSize(fmt(net)), marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {netPositive ? '+' : ''}{fmt(net)}
+        </div>
+      </div>
+      <div style={{ flex: 1, minWidth: 0, padding: '11px 10px', borderRadius: 14, background: 'rgba(251,113,133,0.12)', border: '1px solid rgba(251,113,133,0.3)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: THEME.red, fontSize: 10.5, fontFamily: 'Inter, sans-serif', fontWeight: 600 }}>
+          <ArrowDownRight size={12} /> Потрачено
+        </div>
+        <div style={{ color: THEME.text, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: homeBoxFontSize(fmt(expense)), marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {fmt(expense)}
+        </div>
+      </div>
     </div>
   );
 }
