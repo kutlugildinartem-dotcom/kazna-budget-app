@@ -22,7 +22,7 @@ import {
 } from 'recharts';
 import { Browser } from '@capacitor/browser';
 
-const APP_VERSION = '1.12.0';
+const APP_VERSION = '1.13.0';
 const UPDATE_REPO = 'kutlugildinartem-dotcom/kazna-budget-app';
 
 function isVersionNewer(latest, current) {
@@ -92,6 +92,29 @@ const THEME = {
   green: '#34d399',
   red: '#fb7185',
   amber: '#fbbf24',
+};
+
+// Mutated once per render alongside THEME.* — read by glassStyle()/getFontStyle() so the whole
+// app can switch visual "skins" (glass vs. luxury) without threading a prop through every component.
+let UI_SKIN = 'glass';
+
+const UI_SKINS = [
+  { id: 'glass', label: 'Стеклянный' },
+  { id: 'luxury', label: 'Тёмная роскошь' },
+];
+
+const DEFAULT_PALETTE = {
+  border: 'rgba(255,255,255,0.07)', borderStrong: 'rgba(255,255,255,0.14)',
+  text: '#edf1f8', muted: '#7c8aa5', mutedDim: '#4d5b74',
+  green: '#34d399', red: '#fb7185', amber: '#fbbf24',
+};
+
+const LUXURY_PALETTE = {
+  blue: '#d4af37', blueSoft: '#e6c565', cyan: '#f2dfa0',
+  bg: '#0b0904', bgGradientTop: '#171008', surface: '#120e08', surface2: '#1c160d',
+  border: 'rgba(212,175,55,0.18)', borderStrong: 'rgba(212,175,55,0.4)',
+  text: '#f3ecd9', muted: '#b3a37e', mutedDim: '#7a6f56',
+  green: '#8fd6a8', red: '#e2939b', amber: '#e6c565',
 };
 
 const ACCOUNT_TYPES = {
@@ -295,8 +318,10 @@ const ALL_NAV_SECTIONS = [
 const DEFAULT_BAR_IDS = TABS.filter(t => t.id !== 'home').map(t => t.id);
 
 function getFontStyle() {
+  const luxury = UI_SKIN === 'luxury';
   return `
   @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+  ${luxury ? `@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&family=Cormorant+Garamond:wght@500;600;700&display=swap');` : ''}
   .no-scrollbar::-webkit-scrollbar { display: none; }
   .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
   input:focus, select:focus { outline: none; border-color: ${THEME.blueSoft} !important; }
@@ -335,6 +360,30 @@ function getFontStyle() {
   .recharts-wrapper, .recharts-surface, .recharts-wrapper *, .recharts-wrapper *:focus, .recharts-surface:focus {
     outline: none !important; -webkit-tap-highlight-color: transparent;
   }
+  ${luxury ? `
+  .luxury-skin, .luxury-skin * { font-family: 'Manrope', sans-serif !important; letter-spacing: 0.1px; }
+  .luxury-skin .luxury-serif { font-family: 'Cormorant Garamond', serif !important; letter-spacing: 0.2px; }
+
+  @keyframes luxuryPopupIn { from { opacity: 0; transform: scale(0.97) translateY(6px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+  @keyframes luxurySheetIn { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes luxuryFabIn { from { opacity: 0; transform: scale(0.88); } to { opacity: 1; transform: scale(1); } }
+  @keyframes luxuryFadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes luxuryShimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+
+  .luxury-skin .anim-in { animation: luxuryFadeUp 0.6s cubic-bezier(.22,1,.36,1) both; }
+  .luxury-skin .popup-in { animation: luxuryPopupIn 0.5s cubic-bezier(.22,1,.36,1) both; }
+  .luxury-skin .sheet-in { animation: luxurySheetIn 0.55s cubic-bezier(.22,1,.36,1) both; }
+  .luxury-skin .fab-in { animation: luxuryFabIn 0.5s cubic-bezier(.22,1,.36,1) both; }
+  .luxury-skin .tap-scale { transition: transform 0.28s cubic-bezier(.22,1,.36,1), opacity 0.28s ease, box-shadow 0.35s ease; }
+  .luxury-skin .tap-scale:active { transform: scale(0.97); opacity: 0.85; }
+  .luxury-skin .goal-glow { animation: none; }
+  .luxury-skin .luxury-shimmer {
+    background: linear-gradient(100deg, ${THEME.text} 40%, ${THEME.blueSoft} 50%, ${THEME.text} 60%);
+    background-size: 250% 100%;
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    animation: luxuryShimmer 5s ease-in-out infinite;
+  }
+  ` : ''}
 `;
 }
 
@@ -374,6 +423,13 @@ const submitBtn = () => ({
 
 function glassStyle(color, opts = {}) {
   const { strength = 1 } = opts;
+  if (UI_SKIN === 'luxury') {
+    return {
+      background: `linear-gradient(160deg, ${THEME.surface2}, ${THEME.surface})`,
+      border: `1px solid ${color}55`,
+      boxShadow: `inset 0 1px 0 rgba(255,255,255,0.05), 0 6px 18px rgba(0,0,0,0.5)`,
+    };
+  }
   return {
     background: `linear-gradient(155deg, ${color}${Math.round(38 * strength).toString(16).padStart(2, '0')}, ${color}0d)`,
     backdropFilter: 'blur(14px) saturate(180%)',
@@ -409,6 +465,7 @@ export default function BudgetApp() {
   const [usdRate, setUsdRate] = useState(null);
   const [currency, setCurrency] = useState('₽');
   const [accentId, setAccentId] = useState('blue');
+  const [uiSkin, setUiSkin] = useState('glass');
   const [barItemIds, setBarItemIds] = useState(DEFAULT_BAR_IDS);
   const [homeSections, setHomeSections] = useState({ goals: true, transactions: true });
   const [editTxId, setEditTxId] = useState(null);
@@ -441,6 +498,13 @@ export default function BudgetApp() {
   THEME.bgGradientTop = accent.bgGradientTop;
   THEME.surface = accent.surface;
   THEME.surface2 = accent.surface2;
+  UI_SKIN = uiSkin;
+  THEME.border = DEFAULT_PALETTE.border; THEME.borderStrong = DEFAULT_PALETTE.borderStrong;
+  THEME.text = DEFAULT_PALETTE.text; THEME.muted = DEFAULT_PALETTE.muted; THEME.mutedDim = DEFAULT_PALETTE.mutedDim;
+  THEME.green = DEFAULT_PALETTE.green; THEME.red = DEFAULT_PALETTE.red; THEME.amber = DEFAULT_PALETTE.amber;
+  if (uiSkin === 'luxury') {
+    Object.assign(THEME, LUXURY_PALETTE);
+  }
   const styles = getStyles();
 
   useEffect(() => {
@@ -462,6 +526,7 @@ export default function BudgetApp() {
           setTransfers(parsed.transfers || []);
           setCurrency(parsed.currency ?? '₽');
           setAccentId(parsed.accentId || 'blue');
+          setUiSkin(parsed.uiSkin || 'glass');
           if (parsed.barItemIds) {
             setBarItemIds(parsed.barItemIds);
           } else {
@@ -516,12 +581,12 @@ export default function BudgetApp() {
       try {
         const res = await storageSet(STORAGE_KEY, JSON.stringify({
           accounts, transactions, goals, limits, customCategories, shoppingItems, recurringPayments, notes, balanceAdjustments, transfers,
-          currency, accentId, barItemIds, homeSections,
+          currency, accentId, uiSkin, barItemIds, homeSections,
         }));
         setSaveError(!res);
       } catch (e) { setSaveError(true); }
     })();
-  }, [accounts, transactions, goals, limits, customCategories, shoppingItems, recurringPayments, notes, balanceAdjustments, transfers, currency, accentId, barItemIds, homeSections, loaded]);
+  }, [accounts, transactions, goals, limits, customCategories, shoppingItems, recurringPayments, notes, balanceAdjustments, transfers, currency, accentId, uiSkin, barItemIds, homeSections, loaded]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -975,7 +1040,7 @@ export default function BudgetApp() {
   return (
     <div style={styles.appOuter}>
       <style>{getFontStyle()}</style>
-      <div style={styles.phone}>
+      <div style={styles.phone} className={uiSkin === 'luxury' ? 'luxury-skin' : ''}>
 
         <div className="no-scrollbar" style={{ position: 'absolute', inset: 0, overflowY: 'auto', overflowX: 'hidden', paddingTop: 'env(safe-area-inset-top)', paddingBottom: 150 }}>
           <div style={styles.glow} />
@@ -1004,7 +1069,13 @@ export default function BudgetApp() {
                   <Settings size={17} color={THEME.text} />
                 </button>
                 <div style={{ color: THEME.muted, fontSize: 12, fontFamily: 'Inter, sans-serif', letterSpacing: 0.3 }}>Общий баланс</div>
-                <div style={{ fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: 30, color: THEME.text, marginTop: 4, letterSpacing: -0.3 }}>
+                <div
+                  className={uiSkin === 'luxury' ? 'luxury-serif luxury-shimmer' : ''}
+                  style={{
+                    fontFamily: uiSkin === 'luxury' ? "'Cormorant Garamond', serif" : 'Space Grotesk, sans-serif',
+                    fontWeight: 700, fontSize: uiSkin === 'luxury' ? 38 : 30, color: THEME.text, marginTop: 4, letterSpacing: -0.3,
+                  }}
+                >
                   {fmt(totalBalance)}
                 </div>
                 {saveError && (
@@ -1313,11 +1384,11 @@ export default function BudgetApp() {
         )}
         {modal === 'settings' && (
           <SettingsModal
-            currency={currency} accentId={accentId} barItemIds={barItemIds} homeSections={homeSections}
+            currency={currency} accentId={accentId} uiSkin={uiSkin} barItemIds={barItemIds} homeSections={homeSections}
             updateCheck={updateCheck} onCheckUpdate={() => runUpdateCheck(true)} onOpenUpdate={openUpdate} updateInfo={updateInfo}
             onClose={() => setModal(null)}
-            onSave={({ currency: c, accentId: a, homeSections: hs, barItemIds: b }) => {
-              setCurrency(c); setAccentId(a); setHomeSections(hs); setBarItemIds(b);
+            onSave={({ currency: c, accentId: a, uiSkin: sk, homeSections: hs, barItemIds: b }) => {
+              setCurrency(c); setAccentId(a); setUiSkin(sk); setHomeSections(hs); setBarItemIds(b);
             }}
           />
         )}
@@ -3161,14 +3232,15 @@ function LimitModal({ category, currentLimit, accounts, onClose, onSave, onClear
   );
 }
 
-function SettingsModal({ currency, accentId, barItemIds, homeSections, updateCheck, onCheckUpdate, onOpenUpdate, updateInfo, onClose, onSave }) {
+function SettingsModal({ currency, accentId, uiSkin, barItemIds, homeSections, updateCheck, onCheckUpdate, onOpenUpdate, updateInfo, onClose, onSave }) {
   const [selectedCurrency, setSelectedCurrency] = useState(currency);
   const [selectedAccent, setSelectedAccent] = useState(accentId);
+  const [selectedSkin, setSelectedSkin] = useState(uiSkin);
   const [barIds, setBarIds] = useState(barItemIds);
   const [sections, setSections] = useState(homeSections);
 
   const submit = () => {
-    onSave({ currency: selectedCurrency, accentId: selectedAccent, homeSections: sections, barItemIds: barIds });
+    onSave({ currency: selectedCurrency, accentId: selectedAccent, uiSkin: selectedSkin, homeSections: sections, barItemIds: barIds });
     onClose();
   };
 
@@ -3177,7 +3249,32 @@ function SettingsModal({ currency, accentId, barItemIds, homeSections, updateChe
 
   return (
     <ModalShell title="Настройки" onClose={onClose}>
-      <label style={fieldLabel()}>Валюта</label>
+      <label style={fieldLabel()}>Внешний вид</label>
+      <div style={{ display: 'flex', gap: 10, marginBottom: 4 }}>
+        {UI_SKINS.map(s => {
+          const active = selectedSkin === s.id;
+          const glassPreviewAccent = ACCENT_THEMES.find(a => a.id === selectedAccent) || ACCENT_THEMES[0];
+          const swatch = s.id === 'luxury'
+            ? `linear-gradient(135deg, ${LUXURY_PALETTE.blueSoft}, ${LUXURY_PALETTE.blue})`
+            : `linear-gradient(135deg, ${glassPreviewAccent.blueSoft}, ${glassPreviewAccent.blue})`;
+          return (
+            <button
+              key={s.id} className="tap-scale" type="button" onClick={() => setSelectedSkin(s.id)}
+              style={{
+                flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, cursor: 'pointer',
+                padding: '14px 10px', borderRadius: 16,
+                border: `1.5px solid ${active ? (s.id === 'luxury' ? LUXURY_PALETTE.blueSoft : glassPreviewAccent.blueSoft) : THEME.border}`,
+                background: active ? `${s.id === 'luxury' ? LUXURY_PALETTE.blueSoft : glassPreviewAccent.blueSoft}18` : THEME.surface2,
+              }}
+            >
+              <span style={{ width: 34, height: 34, borderRadius: s.id === 'luxury' ? 10 : 999, display: 'block', background: swatch }} />
+              <span style={{ fontSize: 12, fontFamily: 'Inter, sans-serif', fontWeight: active ? 600 : 400, color: active ? THEME.text : THEME.muted }}>{s.label}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <label style={{ ...fieldLabel(), marginTop: 18 }}>Валюта</label>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
         {CURRENCIES.map(c => {
           const active = selectedCurrency === c.symbol;
@@ -3195,30 +3292,34 @@ function SettingsModal({ currency, accentId, barItemIds, homeSections, updateChe
         })}
       </div>
 
-      <label style={{ ...fieldLabel(), marginTop: 18 }}>Цветовая тема</label>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14 }}>
-        {ACCENT_THEMES.map(a => {
-          const active = selectedAccent === a.id;
-          return (
-            <button
-              key={a.id} className="tap-scale" onClick={() => setSelectedAccent(a.id)} type="button"
-              style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, cursor: 'pointer', background: 'none', border: 'none', padding: 0, width: 58 }}
-            >
-              <span style={{
-                width: 42, height: 42, borderRadius: 999, display: 'block',
-                background: `linear-gradient(135deg, ${a.blueSoft}, ${a.blue})`,
-                boxShadow: active ? `0 0 0 2px ${THEME.surface}, 0 0 0 4px ${a.blueSoft}` : `inset 0 1px 1px rgba(255,255,255,0.3)`,
-                transition: 'box-shadow 0.2s ease',
-              }} />
-              <span style={{
-                fontSize: 10.5, fontFamily: 'Inter, sans-serif', textAlign: 'center',
-                color: active ? THEME.text : THEME.muted, fontWeight: active ? 600 : 400,
-                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%',
-              }}>{a.label}</span>
-            </button>
-          );
-        })}
-      </div>
+      {selectedSkin !== 'luxury' && (
+        <>
+          <label style={{ ...fieldLabel(), marginTop: 18 }}>Цветовая тема</label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14 }}>
+            {ACCENT_THEMES.map(a => {
+              const active = selectedAccent === a.id;
+              return (
+                <button
+                  key={a.id} className="tap-scale" onClick={() => setSelectedAccent(a.id)} type="button"
+                  style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, cursor: 'pointer', background: 'none', border: 'none', padding: 0, width: 58 }}
+                >
+                  <span style={{
+                    width: 42, height: 42, borderRadius: 999, display: 'block',
+                    background: `linear-gradient(135deg, ${a.blueSoft}, ${a.blue})`,
+                    boxShadow: active ? `0 0 0 2px ${THEME.surface}, 0 0 0 4px ${a.blueSoft}` : `inset 0 1px 1px rgba(255,255,255,0.3)`,
+                    transition: 'box-shadow 0.2s ease',
+                  }} />
+                  <span style={{
+                    fontSize: 10.5, fontFamily: 'Inter, sans-serif', textAlign: 'center',
+                    color: active ? THEME.text : THEME.muted, fontWeight: active ? 600 : 400,
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%',
+                  }}>{a.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
 
       <label style={{ ...fieldLabel(), marginTop: 18 }}>Разделы на главном экране</label>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
