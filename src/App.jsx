@@ -22,7 +22,7 @@ import {
 } from 'recharts';
 import { Browser } from '@capacitor/browser';
 
-const APP_VERSION = '1.11.0';
+const APP_VERSION = '1.12.0';
 const UPDATE_REPO = 'kutlugildinartem-dotcom/kazna-budget-app';
 
 function isVersionNewer(latest, current) {
@@ -2575,7 +2575,9 @@ function MiniCalculatorModal({ initialValue, onApply, onClose }) {
   const [display, setDisplay] = useState(initialValue && Number(initialValue) ? String(Number(initialValue)) : '0');
   const [prev, setPrev] = useState(null);
   const [op, setOp] = useState(null);
-  const [justEvaluated, setJustEvaluated] = useState(false);
+  // true right after "=" or an operator/percent press: the next digit should start a fresh number
+  // instead of being appended to whatever is currently showing.
+  const [awaitingOperand, setAwaitingOperand] = useState(false);
 
   const calc = (a, b, operator) => {
     switch (operator) {
@@ -2583,28 +2585,31 @@ function MiniCalculatorModal({ initialValue, onApply, onClose }) {
       case '−': return a - b;
       case '×': return a * b;
       case '÷': return b !== 0 ? a / b : 0;
+      case '%': return a * b / 100;
       default: return b;
     }
   };
   const round2 = (n) => Math.round(n * 100) / 100;
 
   const inputDigit = (d) => {
-    if (justEvaluated) {
+    if (awaitingOperand) {
       setDisplay(d === '.' ? '0.' : d);
-      setJustEvaluated(false);
+      setAwaitingOperand(false);
       return;
     }
     setDisplay(prevDisplay => {
       if (d === '.') return prevDisplay.includes('.') ? prevDisplay : prevDisplay + '.';
       if (prevDisplay === '0') return d;
-      if (prevDisplay.replace('.', '').length >= 12) return prevDisplay;
+      if (prevDisplay.replace(/[.-]/g, '').length >= 12) return prevDisplay;
       return prevDisplay + d;
     });
   };
 
+  // Operators AND percent all go through here, so "%" behaves like a real operator button:
+  // number → % → second number → "=" — not an instant transform.
   const applyOp = (nextOp) => {
     const current = Number(display);
-    if (prev !== null && op && !justEvaluated) {
+    if (prev !== null && op && !awaitingOperand) {
       const result = round2(calc(prev, current, op));
       setPrev(result);
       setDisplay(String(result));
@@ -2612,7 +2617,7 @@ function MiniCalculatorModal({ initialValue, onApply, onClose }) {
       setPrev(current);
     }
     setOp(nextOp);
-    setJustEvaluated(false);
+    setAwaitingOperand(true);
   };
 
   const equals = () => {
@@ -2622,61 +2627,70 @@ function MiniCalculatorModal({ initialValue, onApply, onClose }) {
     setDisplay(String(result));
     setPrev(null);
     setOp(null);
-    setJustEvaluated(true);
+    setAwaitingOperand(true);
   };
 
-  const percent = () => {
+  const clear = () => { setDisplay('0'); setPrev(null); setOp(null); setAwaitingOperand(false); };
+  const backspace = () => {
+    if (awaitingOperand) return;
+    setDisplay(d => (d.length > 1 ? d.slice(0, -1) : '0'));
+  };
+
+  const resolvedValue = () => {
     const current = Number(display);
-    setDisplay(String(prev !== null && op ? round2(prev * current / 100) : round2(current / 100)));
+    return prev !== null && op ? round2(calc(prev, current, op)) : current;
   };
-
-  const clear = () => { setDisplay('0'); setPrev(null); setOp(null); setJustEvaluated(false); };
-  const backspace = () => setDisplay(d => (d.length > 1 ? d.slice(0, -1) : '0'));
 
   const applyAndClose = () => {
-    const val = Math.abs(Number(display) || 0);
-    onApply(String(val));
+    onApply(String(Math.abs(resolvedValue() || 0)));
     onClose();
   };
+
+  const trail = prev !== null && op ? `${fmt(prev)} ${op === '%' ? '%' : op}` : ' ';
 
   return (
     <PopupShell onClose={onClose}>
       <div style={{ textAlign: 'center', color: THEME.text, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: 16, marginBottom: 14 }}>
         Калькулятор
       </div>
-      <div style={{
-        textAlign: 'right', fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: bigNumberSize(display, 28),
-        color: THEME.text, padding: '6px 4px 14px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-      }}>
-        {display}
+      <div style={{ textAlign: 'right', padding: '2px 4px 0' }}>
+        <div style={{ color: THEME.mutedDim, fontSize: 13, fontFamily: 'Inter, sans-serif', minHeight: 18, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {trail}
+        </div>
+        <div style={{
+          fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: bigNumberSize(display, 28),
+          color: THEME.text, padding: '2px 0 14px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>
+          {display}
+        </div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 12 }}>
         <CalcKey label="C" onClick={clear} kind="muted" />
         <CalcKey label="⌫" onClick={backspace} kind="muted" />
-        <CalcKey label="%" onClick={percent} kind="muted" />
-        <CalcKey label="÷" onClick={() => applyOp('÷')} kind="op" active={op === '÷' && !justEvaluated} />
+        <CalcKey label="%" onClick={() => applyOp('%')} kind="op" active={op === '%' && awaitingOperand} />
+        <CalcKey label="÷" onClick={() => applyOp('÷')} kind="op" active={op === '÷' && awaitingOperand} />
 
         <CalcKey label="7" onClick={() => inputDigit('7')} />
         <CalcKey label="8" onClick={() => inputDigit('8')} />
         <CalcKey label="9" onClick={() => inputDigit('9')} />
-        <CalcKey label="×" onClick={() => applyOp('×')} kind="op" active={op === '×' && !justEvaluated} />
+        <CalcKey label="×" onClick={() => applyOp('×')} kind="op" active={op === '×' && awaitingOperand} />
 
         <CalcKey label="4" onClick={() => inputDigit('4')} />
         <CalcKey label="5" onClick={() => inputDigit('5')} />
         <CalcKey label="6" onClick={() => inputDigit('6')} />
-        <CalcKey label="−" onClick={() => applyOp('−')} kind="op" active={op === '−' && !justEvaluated} />
+        <CalcKey label="−" onClick={() => applyOp('−')} kind="op" active={op === '−' && awaitingOperand} />
 
         <CalcKey label="1" onClick={() => inputDigit('1')} />
         <CalcKey label="2" onClick={() => inputDigit('2')} />
         <CalcKey label="3" onClick={() => inputDigit('3')} />
-        <CalcKey label="+" onClick={() => applyOp('+')} kind="op" active={op === '+' && !justEvaluated} />
+        <CalcKey label="+" onClick={() => applyOp('+')} kind="op" active={op === '+' && awaitingOperand} />
 
         <CalcKey label="0" onClick={() => inputDigit('0')} span2 />
         <CalcKey label="." onClick={() => inputDigit('.')} />
         <CalcKey label="=" onClick={equals} kind="equals" />
       </div>
       <button className="tap-scale" type="button" onClick={applyAndClose} style={submitBtn()}>
-        Использовать {fmt(Math.abs(Number(display) || 0))}
+        Использовать {fmt(Math.abs(resolvedValue() || 0))}
       </button>
     </PopupShell>
   );
