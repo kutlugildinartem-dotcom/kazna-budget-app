@@ -45,7 +45,7 @@ async function downloadAndInstallUpdate(url) {
   await InstallApk.install({ path: uri.replace(/^file:\/\//, '') });
 }
 
-const APP_VERSION = '1.16.0';
+const APP_VERSION = '1.17.0';
 const UPDATE_REPO = 'kutlugildinartem-dotcom/kazna-budget-app';
 
 function isVersionNewer(latest, current) {
@@ -174,8 +174,8 @@ const ACCENT_THEMES = [
   },
   {
     id: 'violet', label: 'Фиолетовый',
-    blue: '#7c5cff', blueSoft: '#9b81ff', cyan: '#c4b5fd',
-    bg: '#0a0714', bgGradientTop: '#150d24', surface: '#1a1130', surface2: '#231a3d',
+    blue: '#8347e5', blueSoft: '#a173f2', cyan: '#c9a7ff',
+    bg: '#060309', bgGradientTop: '#100816', surface: '#130a1c', surface2: '#1c1029',
   },
   {
     id: 'coral', label: 'Коралл',
@@ -452,11 +452,11 @@ const submitBtn = () => ({
 function glassStyle(color, opts = {}) {
   const { strength = 1 } = opts;
   return {
-    background: `linear-gradient(155deg, ${color}${Math.round(38 * strength).toString(16).padStart(2, '0')}, ${color}0d)`,
-    backdropFilter: 'blur(14px) saturate(180%)',
-    WebkitBackdropFilter: 'blur(14px) saturate(180%)',
-    border: `1px solid ${color}40`,
-    boxShadow: `inset 0 1px 1px rgba(255,255,255,0.28), 0 4px 14px ${color}22`,
+    background: `linear-gradient(160deg, ${color}${Math.round(26 * strength).toString(16).padStart(2, '0')}, ${color}0a)`,
+    backdropFilter: 'blur(6px) saturate(130%)',
+    WebkitBackdropFilter: 'blur(6px) saturate(130%)',
+    border: `1px solid ${color}38`,
+    boxShadow: `inset 0 1px 0 rgba(255,255,255,0.07), 0 3px 10px ${color}1a`,
   };
 }
 
@@ -485,7 +485,7 @@ export default function BudgetApp() {
   const [transfers, setTransfers] = useState([]);
   const [usdRate, setUsdRate] = useState(null);
   const [currency, setCurrency] = useState('₽');
-  const [accentId, setAccentId] = useState('blue');
+  const [accentId, setAccentId] = useState('violet');
   const [balanceInUsd, setBalanceInUsd] = useState(false);
   const [barItemIds, setBarItemIds] = useState(DEFAULT_BAR_IDS);
   const [homeSections, setHomeSections] = useState({ goals: true, transactions: true, notes: false, shopping: false });
@@ -544,7 +544,7 @@ export default function BudgetApp() {
           setBalanceAdjustments(parsed.balanceAdjustments || []);
           setTransfers(parsed.transfers || []);
           setCurrency(parsed.currency ?? '₽');
-          setAccentId(parsed.accentId || 'blue');
+          setAccentId(parsed.accentId && parsed.accentId !== 'blue' ? parsed.accentId : 'violet');
           if (parsed.barItemIds) {
             setBarItemIds(parsed.barItemIds);
           } else {
