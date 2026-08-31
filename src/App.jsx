@@ -14,7 +14,7 @@ import {
   Laptop, Smartphone, Headphones, Camera, Gamepad2, Banknote,
   Baby, Dog, Cat, Users,
   Palette, Scissors, Umbrella, TreePine, Building2, MapPin, Flag, Clock,
-  TrendingUp, TrendingDown, Calculator, ExternalLink, ArrowLeftRight
+  TrendingUp, TrendingDown, Calculator, ExternalLink, ArrowLeftRight, ArrowUpDown, ChevronUp
 } from 'lucide-react';
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -22,7 +22,7 @@ import {
 } from 'recharts';
 import { Browser } from '@capacitor/browser';
 
-const APP_VERSION = '1.13.1';
+const APP_VERSION = '1.14.0';
 const UPDATE_REPO = 'kutlugildinartem-dotcom/kazna-budget-app';
 
 function isVersionNewer(latest, current) {
@@ -153,6 +153,56 @@ const ACCENT_THEMES = [
     id: 'violet', label: 'Фиолетовый',
     blue: '#7c5cff', blueSoft: '#9b81ff', cyan: '#c4b5fd',
     bg: '#0a0714', bgGradientTop: '#150d24', surface: '#1a1130', surface2: '#231a3d',
+  },
+  {
+    id: 'coral', label: 'Коралл',
+    blue: '#ff6b5b', blueSoft: '#ff8a7a', cyan: '#ffb199',
+    bg: '#0f0605', bgGradientTop: '#1c0d09', surface: '#1a0e0a', surface2: '#26150f',
+  },
+  {
+    id: 'rose', label: 'Роза',
+    blue: '#ec4899', blueSoft: '#f472b6', cyan: '#fbb6ce',
+    bg: '#0f050a', bgGradientTop: '#1c0b14', surface: '#190a11', surface2: '#241019',
+  },
+  {
+    id: 'amber', label: 'Янтарь',
+    blue: '#f59e0b', blueSoft: '#fbbf24', cyan: '#fde68a',
+    bg: '#0f0a02', bgGradientTop: '#1c1405', surface: '#191207', surface2: '#241a0a',
+  },
+  {
+    id: 'teal', label: 'Бирюза',
+    blue: '#14b8a6', blueSoft: '#2dd4bf', cyan: '#99f6e4',
+    bg: '#020e0d', bgGradientTop: '#051917', surface: '#061615', surface2: '#0a201e',
+  },
+  {
+    id: 'indigo', label: 'Индиго',
+    blue: '#6366f1', blueSoft: '#818cf8', cyan: '#c7d2fe',
+    bg: '#07071a', bgGradientTop: '#0e0e2b', surface: '#0d0d24', surface2: '#141433',
+  },
+  {
+    id: 'crimson', label: 'Багровый',
+    blue: '#dc2626', blueSoft: '#ef4444', cyan: '#fca5a5',
+    bg: '#0f0303', bgGradientTop: '#1c0707', surface: '#190606', surface2: '#260a0a',
+  },
+  {
+    id: 'forest', label: 'Лесной',
+    blue: '#16a34a', blueSoft: '#22c55e', cyan: '#86efac',
+    bg: '#020e05', bgGradientTop: '#05190c', surface: '#06160a', surface2: '#0a2010',
+  },
+  {
+    id: 'slate', label: 'Сланец',
+    blue: '#64748b', blueSoft: '#94a3b8', cyan: '#cbd5e1',
+    bg: '#080a0d', bgGradientTop: '#101418', surface: '#0e1216', surface2: '#161c22',
+  },
+  {
+    id: 'fuchsia', label: 'Фуксия',
+    blue: '#c026d3', blueSoft: '#e879f9', cyan: '#f5d0fe',
+    bg: '#0d0410', bgGradientTop: '#180a1e', surface: '#160a1a', surface2: '#220f28',
+  },
+  {
+    id: 'arctic', label: 'Арктика',
+    blue: '#0ea5e9', blueSoft: '#38bdf8', cyan: '#bae6fd',
+    bg: '#020a10', bgGradientTop: '#051620', surface: '#06131c', surface2: '#0a1c29',
   },
 ];
 
@@ -293,6 +343,7 @@ const ALL_NAV_SECTIONS = [
   ...MENU_ITEMS.map(m => ({ ...m, kind: 'modal' })),
 ];
 const DEFAULT_BAR_IDS = TABS.filter(t => t.id !== 'home').map(t => t.id);
+const DEFAULT_HOME_ORDER = ['goals', 'transactions', 'widgets'];
 
 function getFontStyle() {
   return `
@@ -409,8 +460,12 @@ export default function BudgetApp() {
   const [usdRate, setUsdRate] = useState(null);
   const [currency, setCurrency] = useState('₽');
   const [accentId, setAccentId] = useState('blue');
+  const [balanceInUsd, setBalanceInUsd] = useState(false);
   const [barItemIds, setBarItemIds] = useState(DEFAULT_BAR_IDS);
-  const [homeSections, setHomeSections] = useState({ goals: true, transactions: true });
+  const [homeSections, setHomeSections] = useState({ goals: true, transactions: true, notes: false, shopping: false });
+  const [homeOrder, setHomeOrder] = useState(DEFAULT_HOME_ORDER);
+  const [homeCollapsed, setHomeCollapsed] = useState({ goals: false, transactions: false });
+  const [reorderMode, setReorderMode] = useState(false);
   const [editTxId, setEditTxId] = useState(null);
   const [editAccountId, setEditAccountId] = useState(null);
   const [editGoalId, setEditGoalId] = useState(null);
@@ -468,7 +523,9 @@ export default function BudgetApp() {
             const legacyHiddenTabs = parsed.hiddenTabs || [];
             setBarItemIds(DEFAULT_BAR_IDS.filter(id => !legacyHiddenTabs.includes(id)));
           }
-          setHomeSections(parsed.homeSections || { goals: true, transactions: true });
+          setHomeSections({ goals: true, transactions: true, notes: false, shopping: false, ...(parsed.homeSections || {}) });
+          setHomeOrder(Array.isArray(parsed.homeOrder) && parsed.homeOrder.length ? parsed.homeOrder : DEFAULT_HOME_ORDER);
+          setHomeCollapsed({ goals: false, transactions: false, ...(parsed.homeCollapsed || {}) });
         }
       } catch (e) { /* nothing saved yet */ }
       if (!cancelled) setLoaded(true);
@@ -516,12 +573,12 @@ export default function BudgetApp() {
       try {
         const res = await storageSet(STORAGE_KEY, JSON.stringify({
           accounts, transactions, goals, limits, customCategories, shoppingItems, recurringPayments, notes, balanceAdjustments, transfers,
-          currency, accentId, barItemIds, homeSections,
+          currency, accentId, barItemIds, homeSections, homeOrder, homeCollapsed,
         }));
         setSaveError(!res);
       } catch (e) { setSaveError(true); }
     })();
-  }, [accounts, transactions, goals, limits, customCategories, shoppingItems, recurringPayments, notes, balanceAdjustments, transfers, currency, accentId, barItemIds, homeSections, loaded]);
+  }, [accounts, transactions, goals, limits, customCategories, shoppingItems, recurringPayments, notes, balanceAdjustments, transfers, currency, accentId, barItemIds, homeSections, homeOrder, homeCollapsed, loaded]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -776,6 +833,16 @@ export default function BudgetApp() {
     setAccounts(prev => prev.map(a => a.id === adj.accountId ? { ...a, balance: a.balance - adj.delta } : a));
   }
 
+  function moveHomeSection(idx, dir) {
+    setHomeOrder(prev => {
+      const next = [...prev];
+      const j = idx + dir;
+      if (j < 0 || j >= next.length) return prev;
+      [next[idx], next[j]] = [next[j], next[idx]];
+      return next;
+    });
+  }
+
   function addTransfer({ fromAccountId, toAccountId, amount, date }) {
     const amt = Number(amount);
     if (!amt || amt <= 0 || !fromAccountId || !toAccountId || fromAccountId === toAccountId) return;
@@ -995,6 +1062,17 @@ export default function BudgetApp() {
                 </button>
                 <button
                   className="tap-scale"
+                  onClick={() => setReorderMode(v => !v)}
+                  style={{
+                    position: 'absolute', top: 22, right: 62, width: 38, height: 38, borderRadius: 13, cursor: 'pointer',
+                    display: 'grid', placeItems: 'center',
+                    ...(reorderMode ? { background: `${THEME.blueSoft}22`, border: `1px solid ${THEME.blueSoft}` } : glassStyle(THEME.muted)),
+                  }}
+                >
+                  <ArrowUpDown size={16} color={reorderMode ? THEME.blueSoft : THEME.text} />
+                </button>
+                <button
+                  className="tap-scale"
                   onClick={() => setModal('settings')}
                   style={{
                     position: 'absolute', top: 22, right: 16, width: 38, height: 38, borderRadius: 13, cursor: 'pointer',
@@ -1004,9 +1082,18 @@ export default function BudgetApp() {
                   <Settings size={17} color={THEME.text} />
                 </button>
                 <div style={{ color: THEME.muted, fontSize: 12, fontFamily: 'Inter, sans-serif', letterSpacing: 0.3 }}>Общий баланс</div>
-                <div style={{ fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: 30, color: THEME.text, marginTop: 4, letterSpacing: -0.3 }}>
-                  {fmt(totalBalance)}
-                </div>
+                <button
+                  className="tap-scale" type="button"
+                  onClick={() => usdRate && setBalanceInUsd(v => !v)}
+                  style={{
+                    background: 'none', border: 'none', cursor: usdRate ? 'pointer' : 'default', padding: 0,
+                    fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: 30, color: THEME.text, marginTop: 4, letterSpacing: -0.3,
+                  }}
+                >
+                  {balanceInUsd && usdRate
+                    ? `$${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(totalBalance / usdRate)}`
+                    : fmt(totalBalance)}
+                </button>
                 {saveError && (
                   <div style={{ color: THEME.red, fontSize: 12, marginTop: 4, fontFamily: 'Inter, sans-serif' }}>Не удалось сохранить изменения</div>
                 )}
@@ -1027,46 +1114,102 @@ export default function BudgetApp() {
                 </div>
               )}
 
-              {homeSections.goals && (
-                <Section title="Цели" collapsible defaultOpen>
-                  <div style={{ padding: '4px 20px 8px' }}>
-                    {activeGoals.length === 0 ? (
-                      <EmptyRow text="Пока нет целей — добавьте первую" onClick={() => setModal('goal')} />
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                        {activeGoals.map((g, i) => (
-                          <GoalWidgetCard
-                            key={g.id} goal={g} delay={i * 40} onClick={() => setContributeGoalId(g.id)}
-                            justCompleted={g.id === justCompletedId} struck={g.id === strikeId}
-                          />
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </Section>
-              )}
+              {(() => {
+                const visibleBlocks = homeOrder.filter(id => {
+                  if (id === 'goals') return homeSections.goals;
+                  if (id === 'transactions') return homeSections.transactions && transactions.length > 0;
+                  if (id === 'widgets') return homeSections.notes || homeSections.shopping;
+                  return false;
+                });
+                const lastVisible = visibleBlocks[visibleBlocks.length - 1];
 
-              {homeSections.transactions && transactions.length > 0 && (
-                <Section title="Последние операции" collapsible defaultOpen last>
-                  <div style={{ padding: '4px 20px 8px' }}>
-                    <EarnSpendResultRow
-                      income={groupedTransactions[0].income} expense={groupedTransactions[0].expense}
-                      net={groupedTransactions[0].income - groupedTransactions[0].expense}
-                    />
-                    {groupedTransactions[0].items.slice(0, 4).map((t, i) => (
-                      <TransactionRow
-                        key={t.id} tx={t}
-                        category={t.kind === 'adjustment' ? ADJUSTMENT_CATEGORY : t.kind === 'transfer' ? TRANSFER_CATEGORY : resolveCategory(t.category)}
-                        delay={i * 30}
-                        account={accounts.find(a => a.id === t.accountId)}
-                        toAccount={t.kind === 'transfer' ? accounts.find(a => a.id === t.toAccountId) : undefined}
-                        onDelete={() => t.kind === 'adjustment' ? deleteBalanceAdjustment(t.id) : t.kind === 'transfer' ? deleteTransfer(t.id) : deleteTransaction(t)}
-                        onEdit={t.kind === 'adjustment' || t.kind === 'transfer' || t.category === 'goal' ? undefined : () => setEditTxId(t.id)}
-                      />
-                    ))}
-                  </div>
-                </Section>
-              )}
+                return homeOrder.map((id, idx) => {
+                  const arrows = reorderMode ? <ReorderArrows idx={idx} total={homeOrder.length} onMove={(dir) => moveHomeSection(idx, dir)} /> : null;
+
+                  if (id === 'goals' && homeSections.goals) {
+                    return (
+                      <Section
+                        key="goals" title="Цели" collapsible last={id === lastVisible}
+                        open={!homeCollapsed.goals} onToggle={() => setHomeCollapsed(c => ({ ...c, goals: !c.goals }))}
+                        extra={arrows}
+                      >
+                        <div style={{ padding: '4px 20px 8px' }}>
+                          {activeGoals.length === 0 ? (
+                            <EmptyRow text="Пока нет целей — добавьте первую" onClick={() => setModal('goal')} />
+                          ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                              {activeGoals.map((g, i) => (
+                                <GoalWidgetCard
+                                  key={g.id} goal={g} delay={i * 40} onClick={() => setContributeGoalId(g.id)}
+                                  justCompleted={g.id === justCompletedId} struck={g.id === strikeId}
+                                />
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </Section>
+                    );
+                  }
+
+                  if (id === 'transactions' && homeSections.transactions && transactions.length > 0) {
+                    return (
+                      <Section
+                        key="transactions" title="Последние операции" collapsible last={id === lastVisible}
+                        open={!homeCollapsed.transactions} onToggle={() => setHomeCollapsed(c => ({ ...c, transactions: !c.transactions }))}
+                        extra={arrows}
+                      >
+                        <div style={{ padding: '4px 20px 8px' }}>
+                          <EarnSpendResultRow
+                            income={groupedTransactions[0].income} expense={groupedTransactions[0].expense}
+                            net={groupedTransactions[0].income - groupedTransactions[0].expense}
+                          />
+                          {groupedTransactions[0].items.slice(0, 4).map((t, i) => (
+                            <TransactionRow
+                              key={t.id} tx={t}
+                              category={t.kind === 'adjustment' ? ADJUSTMENT_CATEGORY : t.kind === 'transfer' ? TRANSFER_CATEGORY : resolveCategory(t.category)}
+                              delay={i * 30}
+                              account={accounts.find(a => a.id === t.accountId)}
+                              toAccount={t.kind === 'transfer' ? accounts.find(a => a.id === t.toAccountId) : undefined}
+                              onDelete={() => t.kind === 'adjustment' ? deleteBalanceAdjustment(t.id) : t.kind === 'transfer' ? deleteTransfer(t.id) : deleteTransaction(t)}
+                              onEdit={t.kind === 'adjustment' || t.kind === 'transfer' || t.category === 'goal' ? undefined : () => setEditTxId(t.id)}
+                            />
+                          ))}
+                        </div>
+                      </Section>
+                    );
+                  }
+
+                  if (id === 'widgets' && (homeSections.notes || homeSections.shopping)) {
+                    const notesSorted = [...notes].sort((a, b) => (b.pinned - a.pinned) || (b.updatedAt - a.updatedAt)).slice(0, 3);
+                    const shoppingSorted = shoppingItems.filter(it => !it.done)
+                      .sort((a, b) => (a.urgency === 'urgent' ? 0 : 1) - (b.urgency === 'urgent' ? 0 : 1))
+                      .slice(0, 3);
+                    return (
+                      <div key="widgets" style={{ marginTop: 18, marginBottom: id === lastVisible ? 0 : 4 }}>
+                        {arrows && <div style={{ padding: '0 20px 8px', display: 'flex', justifyContent: 'flex-end' }}>{arrows}</div>}
+                        <div style={{ padding: '0 20px 8px', display: 'flex', gap: 12 }}>
+                          {homeSections.notes && (
+                            <HomeWidgetCard
+                              icon={StickyNote} iconColor={THEME.green} label="Заметки"
+                              items={notesSorted.map(n => n.title || 'Без названия')} emptyText="Пока нет заметок"
+                              onOpen={() => setModal('notes')}
+                            />
+                          )}
+                          {homeSections.shopping && (
+                            <HomeWidgetCard
+                              icon={NotebookPen} iconColor={THEME.cyan} label="Список покупок"
+                              items={shoppingSorted.map(it => it.name)} emptyText="Список пуст"
+                              onOpen={() => setModal('shopping')}
+                            />
+                          )}
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return null;
+                });
+              })()}
             </div>
           )}
 
@@ -1260,7 +1403,7 @@ export default function BudgetApp() {
             position: 'absolute', right: 18, bottom: 82, zIndex: 26, width: 56, height: 56, borderRadius: 999,
             border: 'none', cursor: 'pointer', overflow: 'hidden',
             background: `linear-gradient(150deg, ${THEME.blueSoft}, ${THEME.blue})`,
-            boxShadow: '0 10px 26px rgba(61,127,255,0.55), inset 0 1px 1px rgba(255,255,255,0.4)',
+            boxShadow: `0 4px 10px ${THEME.blue}4d, inset 0 1px 1px rgba(255,255,255,0.4)`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}
         >
@@ -1825,18 +1968,67 @@ function NavTab({ icon: Icon, label, active, onClick, badge }) {
   );
 }
 
-function Section({ title, children, last, collapsible = false, defaultOpen = true }) {
-  const [open, setOpen] = useState(defaultOpen);
+function ReorderArrows({ idx, total, onMove }) {
+  const btnStyle = (disabled) => ({
+    width: 26, height: 26, borderRadius: 8, border: `1px solid ${THEME.border}`, background: THEME.surface2,
+    display: 'grid', placeItems: 'center', cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.35 : 1, color: THEME.muted,
+  });
+  return (
+    <div style={{ display: 'flex', gap: 4 }}>
+      <button className="tap-scale" type="button" disabled={idx === 0} onClick={() => onMove(-1)} style={btnStyle(idx === 0)}>
+        <ChevronUp size={14} />
+      </button>
+      <button className="tap-scale" type="button" disabled={idx === total - 1} onClick={() => onMove(1)} style={btnStyle(idx === total - 1)}>
+        <ChevronDown size={14} />
+      </button>
+    </div>
+  );
+}
+
+function HomeWidgetCard({ icon: Icon, iconColor, label, items, emptyText, onOpen }) {
+  return (
+    <button
+      className="tap-scale" type="button" onClick={onOpen}
+      style={{
+        flex: 1, minWidth: 0, textAlign: 'left', cursor: 'pointer', padding: 14, borderRadius: 18,
+        background: `linear-gradient(160deg, ${THEME.surface2}, ${THEME.surface})`, border: `1px solid ${THEME.border}`,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 9 }}>
+        <GlassIcon icon={Icon} color={iconColor} size={30} iconSize={14} />
+        <span style={{ color: THEME.text, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 600, fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+      </div>
+      {items.length === 0 ? (
+        <div style={{ color: THEME.mutedDim, fontSize: 11.5, fontFamily: 'Inter, sans-serif' }}>{emptyText}</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          {items.map((text, i) => (
+            <div key={i} style={{ color: THEME.muted, fontSize: 11.5, fontFamily: 'Inter, sans-serif', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {i + 1}. {text}
+            </div>
+          ))}
+        </div>
+      )}
+    </button>
+  );
+}
+
+function Section({ title, children, last, collapsible = false, defaultOpen = true, open: openProp, onToggle, extra }) {
+  const [openState, setOpenState] = useState(defaultOpen);
+  const open = openProp !== undefined ? openProp : openState;
+  const toggle = onToggle || (() => setOpenState(v => !v));
   return (
     <div style={{ marginTop: 18, marginBottom: last ? 0 : 4 }}>
-      <div style={{ padding: '0 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div style={{ padding: '0 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
         <div style={{ color: THEME.text, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 600, fontSize: 15, letterSpacing: 0.2 }}>
           {title}
         </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        {extra}
         {collapsible && (
           <button
             className="tap-scale"
-            onClick={() => setOpen(v => !v)}
+            onClick={toggle}
             style={{
               background: 'none', border: 'none', cursor: 'pointer', color: THEME.mutedDim,
               padding: 4, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -1845,6 +2037,7 @@ function Section({ title, children, last, collapsible = false, defaultOpen = tru
             <ChevronDown size={17} style={{ transform: open ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform 0.3s cubic-bezier(.34,1.56,.64,1)' }} />
           </button>
         )}
+        </div>
       </div>
       <div style={{ display: 'grid', gridTemplateRows: open ? '1fr' : '0fr', transition: 'grid-template-rows 0.38s cubic-bezier(.22,1,.36,1)' }}>
         <div style={{ overflow: 'hidden', minHeight: 0 }}>
@@ -2523,6 +2716,45 @@ function PopupShell({ onClose, children }) {
   );
 }
 
+const HOME_WIDGET_OPTIONS = [
+  { id: 'goals', label: 'Цели', icon: PiggyBank, color: '#5c93ff' },
+  { id: 'transactions', label: 'Последние операции', icon: List, color: '#5c93ff' },
+  { id: 'notes', label: 'Заметки', icon: StickyNote, color: '#34d399' },
+  { id: 'shopping', label: 'Список покупок', icon: NotebookPen, color: '#22d3ee' },
+];
+
+function HomeWidgetsPopup({ sections, onToggle, onClose }) {
+  return (
+    <PopupShell onClose={onClose}>
+      <div style={{ textAlign: 'center', color: THEME.text, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: 16, marginBottom: 4 }}>
+        Разделы на главном
+      </div>
+      <div style={{ textAlign: 'center', color: THEME.mutedDim, fontSize: 12, fontFamily: 'Inter, sans-serif', marginBottom: 16 }}>
+        Добавляйте и убирайте по вкусу
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {HOME_WIDGET_OPTIONS.map(opt => {
+          const active = !!sections[opt.id];
+          return (
+            <button
+              key={opt.id} className="tap-scale" type="button" onClick={() => onToggle(opt.id)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 14, cursor: 'pointer',
+                border: `1px solid ${active ? opt.color : THEME.border}`, background: active ? `${opt.color}18` : THEME.surface2,
+              }}
+            >
+              <GlassIcon icon={opt.icon} color={opt.color} size={34} iconSize={15} />
+              <span style={{ flex: 1, textAlign: 'left', color: THEME.text, fontSize: 13, fontFamily: 'Inter, sans-serif', fontWeight: 500 }}>{opt.label}</span>
+              {active ? <Check size={17} color={opt.color} /> : <Plus size={17} color={THEME.mutedDim} />}
+            </button>
+          );
+        })}
+      </div>
+      <button className="tap-scale" type="button" onClick={onClose} style={submitBtn()}>Готово</button>
+    </PopupShell>
+  );
+}
+
 function ActionChoiceModal({ onClose, onChoose }) {
   return (
     <PopupShell onClose={onClose}>
@@ -2743,7 +2975,7 @@ function FxAmountField({ value, onChange, usdRate, placeholder = '0' }) {
       {usdMode && (
         <div style={{ color: THEME.mutedDim, fontSize: 11, fontFamily: 'Inter, sans-serif', marginTop: 5 }}>
           {usdRate
-            ? `≈ ${fmt(Math.round(Number(usdValue || 0) * usdRate))} по курсу ЦБ ${usdRate.toFixed(2)} ₽/$`
+            ? `Введено: $${usdValue || 0} ≈ ${fmt(Math.round(Number(usdValue || 0) * usdRate))} по курсу ЦБ ${usdRate.toFixed(2)} ₽/$`
             : 'Курс доллара недоступен'}
         </div>
       )}
@@ -3166,6 +3398,8 @@ function SettingsModal({ currency, accentId, barItemIds, homeSections, updateChe
   const [selectedAccent, setSelectedAccent] = useState(accentId);
   const [barIds, setBarIds] = useState(barItemIds);
   const [sections, setSections] = useState(homeSections);
+  const [widgetsPopupOpen, setWidgetsPopupOpen] = useState(false);
+  const [navChipsOpen, setNavChipsOpen] = useState(false);
 
   const submit = () => {
     onSave({ currency: selectedCurrency, accentId: selectedAccent, homeSections: sections, barItemIds: barIds });
@@ -3174,6 +3408,7 @@ function SettingsModal({ currency, accentId, barItemIds, homeSections, updateChe
 
   const toggleBar = (id) => setBarIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   const toggleSection = (key) => setSections(prev => ({ ...prev, [key]: !prev[key] }));
+  const activeSectionsCount = Object.values(sections).filter(Boolean).length;
 
   return (
     <ModalShell title="Настройки" onClose={onClose}>
@@ -3221,20 +3456,43 @@ function SettingsModal({ currency, accentId, barItemIds, homeSections, updateChe
       </div>
 
       <label style={{ ...fieldLabel(), marginTop: 18 }}>Разделы на главном экране</label>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-        <ToggleChip label="Цели" active={sections.goals} onClick={() => toggleSection('goals')} />
-        <ToggleChip label="Последние операции" active={sections.transactions} onClick={() => toggleSection('transactions')} />
-      </div>
+      <button
+        className="tap-scale" type="button" onClick={() => setWidgetsPopupOpen(true)}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '11px 14px', borderRadius: 14,
+          cursor: 'pointer', border: `1px solid ${THEME.border}`, background: `linear-gradient(160deg, ${THEME.surface2}, ${THEME.surface})`,
+        }}
+      >
+        <GlassIcon icon={Plus} color={THEME.blueSoft} size={32} iconSize={15} />
+        <span style={{ flex: 1, textAlign: 'left', color: THEME.text, fontFamily: 'Inter, sans-serif', fontWeight: 500, fontSize: 13 }}>Добавить или убрать раздел</span>
+        <span style={{ color: THEME.mutedDim, fontSize: 12, fontFamily: 'Inter, sans-serif' }}>{activeSectionsCount}</span>
+      </button>
+      {widgetsPopupOpen && (
+        <HomeWidgetsPopup sections={sections} onToggle={toggleSection} onClose={() => setWidgetsPopupOpen(false)} />
+      )}
 
-      <label style={{ ...fieldLabel(), marginTop: 18 }}>Вкладки и разделы</label>
-      <div style={{ color: THEME.mutedDim, fontSize: 11, fontFamily: 'Inter, sans-serif', marginBottom: 8 }}>
-        Отмеченные — на нижней панели. Остальные — в меню (☰). Главная всегда на панели.
-      </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-        {ALL_NAV_SECTIONS.map(s => (
-          <ToggleChip key={s.id} label={s.label} active={barIds.includes(s.id)} onClick={() => toggleBar(s.id)} />
-        ))}
-      </div>
+      <button
+        className="tap-scale" type="button" onClick={() => setNavChipsOpen(v => !v)}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+          background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginTop: 18,
+        }}
+      >
+        <label style={{ ...fieldLabel(), marginTop: 0, marginBottom: 0, cursor: 'pointer' }}>Вкладки и разделы</label>
+        <ChevronDown size={16} color={THEME.mutedDim} style={{ transform: navChipsOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.3s cubic-bezier(.34,1.56,.64,1)' }} />
+      </button>
+      {navChipsOpen && (
+        <div className="anim-in">
+          <div style={{ color: THEME.mutedDim, fontSize: 11, fontFamily: 'Inter, sans-serif', margin: '8px 0' }}>
+            Отмеченные — на нижней панели. Остальные — в меню (☰). Главная всегда на панели.
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {ALL_NAV_SECTIONS.map(s => (
+              <ToggleChip key={s.id} label={s.label} active={barIds.includes(s.id)} onClick={() => toggleBar(s.id)} />
+            ))}
+          </div>
+        </div>
+      )}
 
       <label style={{ ...fieldLabel(), marginTop: 18 }}>Обновления</label>
       <div style={{ padding: '12px 14px', borderRadius: 14, background: THEME.surface2, border: `1px solid ${THEME.border}` }}>
