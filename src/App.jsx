@@ -21,8 +21,31 @@ import {
   BarChart, Bar, Cell, ReferenceLine, AreaChart, Area
 } from 'recharts';
 import { Browser } from '@capacitor/browser';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { registerPlugin } from '@capacitor/core';
 
-const APP_VERSION = '1.14.0';
+const InstallApk = registerPlugin('InstallApk');
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(String(reader.result).split(',')[1] || '');
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function downloadAndInstallUpdate(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const blob = await res.blob();
+  const base64 = await blobToBase64(blob);
+  await Filesystem.writeFile({ path: 'update.apk', data: base64, directory: Directory.Cache });
+  const { uri } = await Filesystem.getUri({ path: 'update.apk', directory: Directory.Cache });
+  await InstallApk.install({ path: uri.replace(/^file:\/\//, '') });
+}
+
+const APP_VERSION = '1.15.0';
 const UPDATE_REPO = 'kutlugildinartem-dotcom/kazna-budget-app';
 
 function isVersionNewer(latest, current) {
@@ -473,6 +496,7 @@ export default function BudgetApp() {
   const [saveError, setSaveError] = useState(false);
   const [updateInfo, setUpdateInfo] = useState(null);
   const [updateCheck, setUpdateCheck] = useState({ status: 'idle' });
+  const [installStatus, setInstallStatus] = useState('idle');
   const [tab, setTab] = useState('home');
   const [modal, setModal] = useState(null);
   const [limitModalCat, setLimitModalCat] = useState(null);
@@ -563,8 +587,16 @@ export default function BudgetApp() {
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [loaded]);
 
-  function openUpdate() {
-    if (updateInfo) Browser.open({ url: updateInfo.url });
+  async function openUpdate() {
+    if (!updateInfo || installStatus === 'downloading') return;
+    setInstallStatus('downloading');
+    try {
+      await downloadAndInstallUpdate(updateInfo.url);
+      setInstallStatus('idle');
+    } catch (e) {
+      setInstallStatus('idle');
+      Browser.open({ url: updateInfo.url });
+    }
   }
 
   useEffect(() => {
@@ -1110,7 +1142,9 @@ export default function BudgetApp() {
                     color: THEME.green, fontSize: 12.5, fontFamily: 'Inter, sans-serif', fontWeight: 600,
                   }}
                 >
-                  Доступна версия {updateInfo.version} — нажмите, чтобы обновить
+                  {installStatus === 'downloading'
+                    ? 'Скачивание обновления…'
+                    : `Доступна версия ${updateInfo.version} — нажмите, чтобы обновить`}
                 </div>
               )}
 
@@ -1457,7 +1491,7 @@ export default function BudgetApp() {
         {modal === 'settings' && (
           <SettingsModal
             currency={currency} accentId={accentId} barItemIds={barItemIds} homeSections={homeSections}
-            updateCheck={updateCheck} onCheckUpdate={() => runUpdateCheck(true)} onOpenUpdate={openUpdate} updateInfo={updateInfo}
+            updateCheck={updateCheck} onCheckUpdate={() => runUpdateCheck(true)} onOpenUpdate={openUpdate} updateInfo={updateInfo} installStatus={installStatus}
             onClose={() => setModal(null)}
             onSave={({ currency: c, accentId: a, homeSections: hs, barItemIds: b }) => {
               setCurrency(c); setAccentId(a); setHomeSections(hs); setBarItemIds(b);
@@ -3393,7 +3427,7 @@ function LimitModal({ category, currentLimit, accounts, onClose, onSave, onClear
   );
 }
 
-function SettingsModal({ currency, accentId, barItemIds, homeSections, updateCheck, onCheckUpdate, onOpenUpdate, updateInfo, onClose, onSave }) {
+function SettingsModal({ currency, accentId, barItemIds, homeSections, updateCheck, onCheckUpdate, onOpenUpdate, updateInfo, installStatus, onClose, onSave }) {
   const [selectedCurrency, setSelectedCurrency] = useState(currency);
   const [selectedAccent, setSelectedAccent] = useState(accentId);
   const [barIds, setBarIds] = useState(barItemIds);
@@ -3517,13 +3551,13 @@ function SettingsModal({ currency, accentId, barItemIds, homeSections, updateChe
         )}
         {updateCheck.status === 'available' && updateInfo && (
           <button
-            className="tap-scale" type="button" onClick={onOpenUpdate}
+            className="tap-scale" type="button" onClick={onOpenUpdate} disabled={installStatus === 'downloading'}
             style={{
-              width: '100%', marginTop: 8, padding: '9px 0', borderRadius: 10, cursor: 'pointer', border: 'none',
+              width: '100%', marginTop: 8, padding: '9px 0', borderRadius: 10, cursor: installStatus === 'downloading' ? 'default' : 'pointer', border: 'none',
               background: 'rgba(52,211,153,0.15)', color: THEME.green, fontSize: 12.5, fontFamily: 'Inter, sans-serif', fontWeight: 600,
             }}
           >
-            Доступна версия {updateCheck.version} — скачать
+            {installStatus === 'downloading' ? 'Скачивание…' : `Доступна версия ${updateCheck.version} — установить`}
           </button>
         )}
       </div>
