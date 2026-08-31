@@ -45,7 +45,7 @@ async function downloadAndInstallUpdate(url) {
   await InstallApk.install({ path: uri.replace(/^file:\/\//, '') });
 }
 
-const APP_VERSION = '1.17.0';
+const APP_VERSION = '1.18.0';
 const UPDATE_REPO = 'kutlugildinartem-dotcom/kazna-budget-app';
 
 function isVersionNewer(latest, current) {
@@ -1294,7 +1294,7 @@ export default function BudgetApp() {
                 </div>
               )}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '4px 20px 8px' }}>
-                {accounts.map((a, i) => <AccountCard key={a.id} account={a} delay={i * 40} onDelete={() => deleteAccount(a.id)} onEdit={() => setEditAccountId(a.id)} />)}
+                {accounts.map((a, i) => <AccountCard key={a.id} account={a} delay={i * 40} onEdit={() => setEditAccountId(a.id)} />)}
                 <AddTile label="Новый счёт" full onClick={() => setModal('account')} />
               </div>
 
@@ -1563,6 +1563,7 @@ export default function BudgetApp() {
             usdRate={usdRate}
             onClose={() => setEditAccountId(null)}
             onSave={(patch) => updateAccount(editAccountId, patch)}
+            onDelete={() => { deleteAccount(editAccountId); setEditAccountId(null); }}
           />
         )}
         {editGoalId && (
@@ -2166,9 +2167,8 @@ function TransferRow({ transfer, accounts, delay = 0, onDelete }) {
   );
 }
 
-function AccountCard({ account, onDelete, onEdit, delay = 0 }) {
+function AccountCard({ account, onEdit, delay = 0 }) {
   const meta = ACCOUNT_TYPES[account.type];
-  const [confirming, setConfirming] = useState(false);
   return (
     <div className="anim-in" style={{
       display: 'flex', alignItems: 'center', gap: 14, borderRadius: 18, padding: 16, animationDelay: `${delay}ms`,
@@ -2189,14 +2189,6 @@ function AccountCard({ account, onDelete, onEdit, delay = 0 }) {
       </div>
       <button className="tap-scale" onClick={onEdit} style={{ background: 'none', border: 'none', cursor: 'pointer', color: THEME.mutedDim, padding: 4 }}>
         <PencilLine size={15} />
-      </button>
-      <button
-        className="tap-scale"
-        onClick={() => confirming ? onDelete() : setConfirming(true)}
-        onBlur={() => setConfirming(false)}
-        style={{ background: 'none', border: 'none', cursor: 'pointer', color: confirming ? THEME.red : THEME.mutedDim, padding: 4 }}
-      >
-        <Trash2 size={15} />
       </button>
     </div>
   );
@@ -3028,10 +3020,22 @@ function FxAmountField({ value, onChange, usdRate, placeholder = '0' }) {
         </button>
       </div>
       {usdMode && (
-        <div style={{ color: THEME.mutedDim, fontSize: 11, fontFamily: 'Inter, sans-serif', marginTop: 5 }}>
-          {usdRate
-            ? `Введено: $${usdValue || 0} ≈ ${fmt(Math.round(Number(usdValue || 0) * usdRate))} по курсу ЦБ ${usdRate.toFixed(2)} ₽/$`
-            : 'Курс доллара недоступен'}
+        <div style={{
+          marginTop: 8, padding: '10px 12px', borderRadius: 12,
+          background: `${THEME.cyan}14`, border: `1px solid ${THEME.cyan}40`,
+        }}>
+          {usdRate ? (
+            <>
+              <div style={{ color: THEME.cyan, fontSize: 14, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700 }}>
+                Введено: ${usdValue || 0}
+              </div>
+              <div style={{ color: THEME.muted, fontSize: 11.5, fontFamily: 'Inter, sans-serif', marginTop: 3 }}>
+                Будет сохранено: {fmt(Math.round(Number(usdValue || 0) * usdRate))} · курс ЦБ {usdRate.toFixed(2)} ₽/$
+              </div>
+            </>
+          ) : (
+            <div style={{ color: THEME.red, fontSize: 12, fontFamily: 'Inter, sans-serif' }}>Курс доллара недоступен</div>
+          )}
         </div>
       )}
       {calcOpen && (
@@ -4206,11 +4210,12 @@ function RecurringForm({ accounts, categories, initial, onSubmit }) {
   );
 }
 
-function EditAccountModal({ account, onClose, onSave, usdRate }) {
+function EditAccountModal({ account, onClose, onSave, onDelete, usdRate }) {
   const [name, setName] = useState(account ? account.name : '');
   const [type, setType] = useState(account ? account.type : 'card');
   const [balance, setBalance] = useState(account ? String(account.balance) : '');
   const [photo, setPhoto] = useState(account ? account.photo || null : null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   if (!account) return null;
   const submit = () => { if (!name.trim()) return; onSave({ name: name.trim(), type, balance, photo }); onClose(); };
   return (
@@ -4240,6 +4245,14 @@ function EditAccountModal({ account, onClose, onSave, usdRate }) {
       <label style={{ ...fieldLabel(), marginTop: 14 }}>Фото счёта (необязательно)</label>
       <PhotoPicker photo={photo} onChange={setPhoto} />
       <button className="tap-scale" style={submitBtn()} onClick={submit}>Сохранить</button>
+      <button
+        className="tap-scale" type="button"
+        onClick={() => confirmingDelete ? onDelete() : setConfirmingDelete(true)}
+        onBlur={() => setConfirmingDelete(false)}
+        style={{ ...submitBtn(), marginTop: 10, background: 'transparent', border: `1px solid ${confirmingDelete ? THEME.red : THEME.border}`, color: THEME.red }}
+      >
+        {confirmingDelete ? 'Точно удалить счёт?' : 'Удалить счёт'}
+      </button>
     </ModalShell>
   );
 }
