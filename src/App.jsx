@@ -14,7 +14,7 @@ import {
   Laptop, Smartphone, Headphones, Camera, Gamepad2, Banknote,
   Baby, Dog, Cat, Users,
   Palette, Scissors, Umbrella, TreePine, Building2, MapPin, Flag, Clock,
-  TrendingUp, TrendingDown, Calculator, ExternalLink, ArrowLeftRight, ArrowUpDown, ChevronUp
+  TrendingUp, TrendingDown, Calculator, ExternalLink, ArrowLeftRight, ArrowUpDown, ChevronUp, LayoutGrid, RefreshCw
 } from 'lucide-react';
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -45,7 +45,7 @@ async function downloadAndInstallUpdate(url) {
   await InstallApk.install({ path: uri.replace(/^file:\/\//, '') });
 }
 
-const APP_VERSION = '1.15.0';
+const APP_VERSION = '1.16.0';
 const UPDATE_REPO = 'kutlugildinartem-dotcom/kazna-budget-app';
 
 function isVersionNewer(latest, current) {
@@ -401,7 +401,10 @@ function getFontStyle() {
   .fab-in { animation: fabIn 0.4s cubic-bezier(.34,1.56,.64,1) both; }
   .tap-scale { transition: transform 0.15s cubic-bezier(.34,1.56,.64,1), opacity 0.15s ease, box-shadow 0.2s ease; }
   .tap-scale:active { transform: scale(0.92); opacity: 0.92; }
-  * { -webkit-tap-highlight-color: transparent; }
+  * { -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  input, textarea, select, [contenteditable], [contenteditable] * {
+    -webkit-user-select: text; user-select: text; -webkit-touch-callout: default;
+  }
   [contenteditable]:empty:before { content: attr(data-placeholder); color: ${THEME.mutedDim}; pointer-events: none; }
   [contenteditable] summary { color: ${THEME.text}; }
   [contenteditable] summary::marker { color: ${THEME.blueSoft}; }
@@ -489,6 +492,7 @@ export default function BudgetApp() {
   const [homeOrder, setHomeOrder] = useState(DEFAULT_HOME_ORDER);
   const [homeCollapsed, setHomeCollapsed] = useState({ goals: false, transactions: false });
   const [reorderMode, setReorderMode] = useState(false);
+  const [homeWidgetsPopupOpen, setHomeWidgetsPopupOpen] = useState(false);
   const [editTxId, setEditTxId] = useState(null);
   const [editAccountId, setEditAccountId] = useState(null);
   const [editGoalId, setEditGoalId] = useState(null);
@@ -1094,17 +1098,6 @@ export default function BudgetApp() {
                 </button>
                 <button
                   className="tap-scale"
-                  onClick={() => setReorderMode(v => !v)}
-                  style={{
-                    position: 'absolute', top: 22, right: 62, width: 38, height: 38, borderRadius: 13, cursor: 'pointer',
-                    display: 'grid', placeItems: 'center',
-                    ...(reorderMode ? { background: `${THEME.blueSoft}22`, border: `1px solid ${THEME.blueSoft}` } : glassStyle(THEME.muted)),
-                  }}
-                >
-                  <ArrowUpDown size={16} color={reorderMode ? THEME.blueSoft : THEME.text} />
-                </button>
-                <button
-                  className="tap-scale"
                   onClick={() => setModal('settings')}
                   style={{
                     position: 'absolute', top: 22, right: 16, width: 38, height: 38, borderRadius: 13, cursor: 'pointer',
@@ -1165,7 +1158,7 @@ export default function BudgetApp() {
                       <Section
                         key="goals" title="Цели" collapsible last={id === lastVisible}
                         open={!homeCollapsed.goals} onToggle={() => setHomeCollapsed(c => ({ ...c, goals: !c.goals }))}
-                        extra={arrows}
+                        extra={arrows} onTitleLongPress={() => setReorderMode(v => !v)}
                       >
                         <div style={{ padding: '4px 20px 8px' }}>
                           {activeGoals.length === 0 ? (
@@ -1190,7 +1183,7 @@ export default function BudgetApp() {
                       <Section
                         key="transactions" title="Последние операции" collapsible last={id === lastVisible}
                         open={!homeCollapsed.transactions} onToggle={() => setHomeCollapsed(c => ({ ...c, transactions: !c.transactions }))}
-                        extra={arrows}
+                        extra={arrows} onTitleLongPress={() => setReorderMode(v => !v)}
                       >
                         <div style={{ padding: '4px 20px 8px' }}>
                           <EarnSpendResultRow
@@ -1468,6 +1461,7 @@ export default function BudgetApp() {
               <NavTab
                 key={t.id} icon={t.icon} label={t.label} active={tab === t.id}
                 onClick={() => { if (t.kind === 'modal') { setModal(t.id); } else { setTab(t.id); } }}
+                onLongPress={t.id === 'home' ? () => setHomeWidgetsPopupOpen(true) : undefined}
                 badge={t.id === 'limits' && anyOverLimit}
               />
             ))}
@@ -1490,11 +1484,11 @@ export default function BudgetApp() {
         )}
         {modal === 'settings' && (
           <SettingsModal
-            currency={currency} accentId={accentId} barItemIds={barItemIds} homeSections={homeSections}
+            currency={currency} accentId={accentId} barItemIds={barItemIds}
             updateCheck={updateCheck} onCheckUpdate={() => runUpdateCheck(true)} onOpenUpdate={openUpdate} updateInfo={updateInfo} installStatus={installStatus}
             onClose={() => setModal(null)}
-            onSave={({ currency: c, accentId: a, homeSections: hs, barItemIds: b }) => {
-              setCurrency(c); setAccentId(a); setHomeSections(hs); setBarItemIds(b);
+            onSave={({ currency: c, accentId: a, barItemIds: b }) => {
+              setCurrency(c); setAccentId(a); setBarItemIds(b);
             }}
           />
         )}
@@ -1615,6 +1609,13 @@ export default function BudgetApp() {
           />
         )}
         {confettiKey && <ConfettiBurst key={confettiKey} onDone={() => setConfettiKey(null)} />}
+        {homeWidgetsPopupOpen && (
+          <HomeWidgetsPopup
+            sections={homeSections}
+            onToggle={(id) => setHomeSections(prev => ({ ...prev, [id]: !prev[id] }))}
+            onClose={() => setHomeWidgetsPopupOpen(false)}
+          />
+        )}
       </div>
     </div>
   );
@@ -1977,9 +1978,10 @@ function CompletePurchaseForm({ item, accounts, onSubmit }) {
     </div>
   );
 }
-function NavTab({ icon: Icon, label, active, onClick, badge }) {
+function NavTab({ icon: Icon, label, active, onClick, onLongPress, badge }) {
+  const longPress = useLongPress(onLongPress);
   return (
-    <button onClick={onClick} style={{
+    <button onClick={onClick} {...(onLongPress ? longPress : {})} style={{
       background: 'none', border: 'none', cursor: 'pointer', display: 'flex', flexDirection: 'column',
       alignItems: 'center', justifyContent: 'center', gap: 3, color: active ? '#fff' : THEME.mutedDim,
       flex: 1, minWidth: 0, height: '100%', position: 'relative', zIndex: 1, padding: 0, margin: 0,
@@ -2000,6 +2002,21 @@ function NavTab({ icon: Icon, label, active, onClick, badge }) {
       }}>{label}</span>
     </button>
   );
+}
+
+function useLongPress(callback, ms = 500) {
+  const timerRef = useRef(null);
+  const start = () => {
+    timerRef.current = setTimeout(() => { if (callback) callback(); }, ms);
+  };
+  const clear = () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = null;
+  };
+  return {
+    onTouchStart: start, onTouchEnd: clear, onTouchCancel: clear, onTouchMove: clear,
+    onMouseDown: start, onMouseUp: clear, onMouseLeave: clear,
+  };
 }
 
 function ReorderArrows({ idx, total, onMove }) {
@@ -2047,14 +2064,18 @@ function HomeWidgetCard({ icon: Icon, iconColor, label, items, emptyText, onOpen
   );
 }
 
-function Section({ title, children, last, collapsible = false, defaultOpen = true, open: openProp, onToggle, extra }) {
+function Section({ title, children, last, collapsible = false, defaultOpen = true, open: openProp, onToggle, extra, onTitleLongPress }) {
   const [openState, setOpenState] = useState(defaultOpen);
   const open = openProp !== undefined ? openProp : openState;
   const toggle = onToggle || (() => setOpenState(v => !v));
+  const longPress = useLongPress(onTitleLongPress);
   return (
     <div style={{ marginTop: 18, marginBottom: last ? 0 : 4 }}>
       <div style={{ padding: '0 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-        <div style={{ color: THEME.text, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 600, fontSize: 15, letterSpacing: 0.2 }}>
+        <div
+          {...(onTitleLongPress ? longPress : {})}
+          style={{ color: THEME.text, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 600, fontSize: 15, letterSpacing: 0.2 }}
+        >
           {title}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -3427,108 +3448,108 @@ function LimitModal({ category, currentLimit, accounts, onClose, onSave, onClear
   );
 }
 
-function SettingsModal({ currency, accentId, barItemIds, homeSections, updateCheck, onCheckUpdate, onOpenUpdate, updateInfo, installStatus, onClose, onSave }) {
+function SettingsSection({ icon: Icon, title, children, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div style={{ marginTop: 18 }}>
+      <button
+        className="tap-scale" type="button" onClick={() => setOpen(v => !v)}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+          background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Icon size={15} color={THEME.mutedDim} />
+          <label style={{ ...fieldLabel(), margin: 0, cursor: 'pointer' }}>{title}</label>
+        </div>
+        <ChevronDown size={16} color={THEME.mutedDim} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.3s cubic-bezier(.34,1.56,.64,1)' }} />
+      </button>
+      {open && <div className="anim-in" style={{ marginTop: 10 }}>{children}</div>}
+    </div>
+  );
+}
+
+function SettingsModal({ currency, accentId, barItemIds, updateCheck, onCheckUpdate, onOpenUpdate, updateInfo, installStatus, onClose, onSave }) {
   const [selectedCurrency, setSelectedCurrency] = useState(currency);
   const [selectedAccent, setSelectedAccent] = useState(accentId);
   const [barIds, setBarIds] = useState(barItemIds);
-  const [sections, setSections] = useState(homeSections);
-  const [widgetsPopupOpen, setWidgetsPopupOpen] = useState(false);
-  const [navChipsOpen, setNavChipsOpen] = useState(false);
 
   const submit = () => {
-    onSave({ currency: selectedCurrency, accentId: selectedAccent, homeSections: sections, barItemIds: barIds });
+    onSave({ currency: selectedCurrency, accentId: selectedAccent, barItemIds: barIds });
     onClose();
   };
 
   const toggleBar = (id) => setBarIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  const toggleSection = (key) => setSections(prev => ({ ...prev, [key]: !prev[key] }));
-  const activeSectionsCount = Object.values(sections).filter(Boolean).length;
+  const selectedCurrencyLabel = CURRENCIES.find(c => c.symbol === selectedCurrency)?.label || '—';
+  const selectedAccentLabel = ACCENT_THEMES.find(a => a.id === selectedAccent)?.label || '';
 
   return (
     <ModalShell title="Настройки" onClose={onClose}>
-      <label style={fieldLabel()}>Валюта</label>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-        {CURRENCIES.map(c => {
-          const active = selectedCurrency === c.symbol;
-          return (
-            <button key={c.code} className="tap-scale" onClick={() => setSelectedCurrency(c.symbol)} style={{
-              padding: '9px 14px', borderRadius: 999, cursor: 'pointer',
-              border: `1px solid ${active ? THEME.blueSoft : THEME.border}`,
-              background: active ? 'rgba(61,127,255,0.15)' : THEME.surface2,
-              color: active ? THEME.text : THEME.muted, fontSize: 13, fontFamily: 'Inter, sans-serif',
-              display: 'flex', alignItems: 'center', gap: 6,
-            }}>
-              <span style={{ fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700 }}>{c.symbol || '—'}</span> {c.label}
-            </button>
-          );
-        })}
+      <div style={{ color: THEME.mutedDim, fontSize: 11.5, fontFamily: 'Inter, sans-serif' }}>
+        Долгое нажатие на «Главная» внизу экрана — разделы на главном. Долгое нажатие на заголовок «Цели» или «Операции» — порядок блоков.
       </div>
 
-      <label style={{ ...fieldLabel(), marginTop: 18 }}>Цветовая тема</label>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14 }}>
-        {ACCENT_THEMES.map(a => {
-          const active = selectedAccent === a.id;
-          return (
-            <button
-              key={a.id} className="tap-scale" onClick={() => setSelectedAccent(a.id)} type="button"
-              style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, cursor: 'pointer', background: 'none', border: 'none', padding: 0, width: 58 }}
-            >
-              <span style={{
-                width: 42, height: 42, borderRadius: 999, display: 'block',
-                background: `linear-gradient(135deg, ${a.blueSoft}, ${a.blue})`,
-                boxShadow: active ? `0 0 0 2px ${THEME.surface}, 0 0 0 4px ${a.blueSoft}` : `inset 0 1px 1px rgba(255,255,255,0.3)`,
-                transition: 'box-shadow 0.2s ease',
-              }} />
-              <span style={{
-                fontSize: 10.5, fontFamily: 'Inter, sans-serif', textAlign: 'center',
-                color: active ? THEME.text : THEME.muted, fontWeight: active ? 600 : 400,
-                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%',
-              }}>{a.label}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      <label style={{ ...fieldLabel(), marginTop: 18 }}>Разделы на главном экране</label>
-      <button
-        className="tap-scale" type="button" onClick={() => setWidgetsPopupOpen(true)}
-        style={{
-          width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '11px 14px', borderRadius: 14,
-          cursor: 'pointer', border: `1px solid ${THEME.border}`, background: `linear-gradient(160deg, ${THEME.surface2}, ${THEME.surface})`,
-        }}
-      >
-        <GlassIcon icon={Plus} color={THEME.blueSoft} size={32} iconSize={15} />
-        <span style={{ flex: 1, textAlign: 'left', color: THEME.text, fontFamily: 'Inter, sans-serif', fontWeight: 500, fontSize: 13 }}>Добавить или убрать раздел</span>
-        <span style={{ color: THEME.mutedDim, fontSize: 12, fontFamily: 'Inter, sans-serif' }}>{activeSectionsCount}</span>
-      </button>
-      {widgetsPopupOpen && (
-        <HomeWidgetsPopup sections={sections} onToggle={toggleSection} onClose={() => setWidgetsPopupOpen(false)} />
-      )}
-
-      <button
-        className="tap-scale" type="button" onClick={() => setNavChipsOpen(v => !v)}
-        style={{
-          width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
-          background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginTop: 18,
-        }}
-      >
-        <label style={{ ...fieldLabel(), marginTop: 0, marginBottom: 0, cursor: 'pointer' }}>Вкладки и разделы</label>
-        <ChevronDown size={16} color={THEME.mutedDim} style={{ transform: navChipsOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.3s cubic-bezier(.34,1.56,.64,1)' }} />
-      </button>
-      {navChipsOpen && (
-        <div className="anim-in">
-          <div style={{ color: THEME.mutedDim, fontSize: 11, fontFamily: 'Inter, sans-serif', margin: '8px 0' }}>
-            Отмеченные — на нижней панели. Остальные — в меню (☰). Главная всегда на панели.
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {ALL_NAV_SECTIONS.map(s => (
-              <ToggleChip key={s.id} label={s.label} active={barIds.includes(s.id)} onClick={() => toggleBar(s.id)} />
-            ))}
-          </div>
+      <SettingsSection icon={Coins} title={`Валюта · ${selectedCurrencyLabel}`}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {CURRENCIES.map(c => {
+            const active = selectedCurrency === c.symbol;
+            return (
+              <button key={c.code} className="tap-scale" onClick={() => setSelectedCurrency(c.symbol)} style={{
+                padding: '9px 14px', borderRadius: 999, cursor: 'pointer',
+                border: `1px solid ${active ? THEME.blueSoft : THEME.border}`,
+                background: active ? 'rgba(61,127,255,0.15)' : THEME.surface2,
+                color: active ? THEME.text : THEME.muted, fontSize: 13, fontFamily: 'Inter, sans-serif',
+                display: 'flex', alignItems: 'center', gap: 6,
+              }}>
+                <span style={{ fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700 }}>{c.symbol || '—'}</span> {c.label}
+              </button>
+            );
+          })}
         </div>
-      )}
+      </SettingsSection>
 
-      <label style={{ ...fieldLabel(), marginTop: 18 }}>Обновления</label>
+      <SettingsSection icon={Palette} title={`Цветовая тема · ${selectedAccentLabel}`}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14 }}>
+          {ACCENT_THEMES.map(a => {
+            const active = selectedAccent === a.id;
+            return (
+              <button
+                key={a.id} className="tap-scale" onClick={() => setSelectedAccent(a.id)} type="button"
+                style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, cursor: 'pointer', background: 'none', border: 'none', padding: 0, width: 58 }}
+              >
+                <span style={{
+                  width: 42, height: 42, borderRadius: 999, display: 'block',
+                  background: `linear-gradient(135deg, ${a.blueSoft}, ${a.blue})`,
+                  boxShadow: active ? `0 0 0 2px ${THEME.surface}, 0 0 0 4px ${a.blueSoft}` : `inset 0 1px 1px rgba(255,255,255,0.3)`,
+                  transition: 'box-shadow 0.2s ease',
+                }} />
+                <span style={{
+                  fontSize: 10.5, fontFamily: 'Inter, sans-serif', textAlign: 'center',
+                  color: active ? THEME.text : THEME.muted, fontWeight: active ? 600 : 400,
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%',
+                }}>{a.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </SettingsSection>
+
+      <SettingsSection icon={LayoutGrid} title="Вкладки и разделы">
+        <div style={{ color: THEME.mutedDim, fontSize: 11, fontFamily: 'Inter, sans-serif', marginBottom: 8 }}>
+          Отмеченные — на нижней панели. Остальные — в меню (☰). Главная всегда на панели.
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {ALL_NAV_SECTIONS.map(s => (
+            <ToggleChip key={s.id} label={s.label} active={barIds.includes(s.id)} onClick={() => toggleBar(s.id)} />
+          ))}
+        </div>
+      </SettingsSection>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 18, marginBottom: 8 }}>
+        <RefreshCw size={15} color={THEME.mutedDim} />
+        <label style={{ ...fieldLabel(), margin: 0 }}>Обновления</label>
+      </div>
       <div style={{ padding: '12px 14px', borderRadius: 14, background: THEME.surface2, border: `1px solid ${THEME.border}` }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
           <span style={{ color: THEME.muted, fontSize: 12.5, fontFamily: 'Inter, sans-serif' }}>Версия {APP_VERSION}</span>
