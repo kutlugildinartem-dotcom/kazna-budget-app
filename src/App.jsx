@@ -45,7 +45,7 @@ async function downloadAndInstallUpdate(url) {
   await InstallApk.install({ path: uri.replace(/^file:\/\//, '') });
 }
 
-const APP_VERSION = '1.18.0';
+const APP_VERSION = '1.19.0';
 const UPDATE_REPO = 'kutlugildinartem-dotcom/kazna-budget-app';
 
 function isVersionNewer(latest, current) {
@@ -234,6 +234,43 @@ const ALL_CATEGORIES = [...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES];
 const findCategory = (id) => ALL_CATEGORIES.find(c => c.id === id) || ALL_CATEGORIES[ALL_CATEGORIES.length - 1];
 const ADJUSTMENT_CATEGORY = { id: 'adjustment', label: 'Корректировка счёта', icon: PencilLine, color: '#7c8aa5' };
 const TRANSFER_CATEGORY = { id: 'transfer', label: 'Перевод между счетами', icon: ArrowLeftRight, color: '#5c93ff' };
+const FX_CATEGORY = { id: 'fx', label: 'Курсовая разница', icon: TrendingUp, color: '#f0abfc' };
+
+const ANALYTICS_PERIODS = [
+  { id: 'day', label: 'День' },
+  { id: 'week', label: 'Неделя' },
+  { id: 'month', label: 'Месяц' },
+  { id: 'quarter', label: 'Квартал' },
+  { id: 'halfyear', label: 'Полгода' },
+  { id: 'year', label: 'Год' },
+];
+
+function periodStartDate(period) {
+  const now = new Date();
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  switch (period) {
+    case 'day': return d;
+    case 'week': { const nd = new Date(d); nd.setDate(d.getDate() - 6); return nd; }
+    case 'quarter': { const nd = new Date(d); nd.setMonth(d.getMonth() - 3); return nd; }
+    case 'halfyear': { const nd = new Date(d); nd.setMonth(d.getMonth() - 6); return nd; }
+    case 'year': return new Date(d.getFullYear(), 0, 1);
+    case 'month':
+    default: return new Date(d.getFullYear(), d.getMonth(), 1);
+  }
+}
+function dateToISO(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function formatRelativeTime(ts) {
+  if (!ts) return '';
+  const diffMin = Math.round((Date.now() - ts) / 60000);
+  if (diffMin < 1) return 'только что';
+  if (diffMin < 60) return `${diffMin} мин назад`;
+  const diffH = Math.round(diffMin / 60);
+  if (diffH < 24) return `${diffH} ч назад`;
+  const diffD = Math.round(diffH / 24);
+  return `${diffD} дн назад`;
+}
 
 const ICON_MAP = {
   utensils: Utensils, car: Car, home: Home, film: Film, heart: HeartPulse, shopping: ShoppingBag,
@@ -484,6 +521,9 @@ export default function BudgetApp() {
   const [balanceAdjustments, setBalanceAdjustments] = useState([]);
   const [transfers, setTransfers] = useState([]);
   const [usdRate, setUsdRate] = useState(null);
+  const [usdRateUpdatedAt, setUsdRateUpdatedAt] = useState(null);
+  const [analyticsPeriod, setAnalyticsPeriod] = useState('month');
+  const lastAppliedUsdRateRef = useRef(null);
   const [currency, setCurrency] = useState('₽');
   const [accentId, setAccentId] = useState('violet');
   const [balanceInUsd, setBalanceInUsd] = useState(false);
@@ -618,8 +658,33 @@ export default function BudgetApp() {
 
   useEffect(() => {
     if (!loaded) return;
-    fetchUsdRate().then(setUsdRate);
+    fetchUsdRate().then(rate => {
+      if (rate) { setUsdRate(rate); setUsdRateUpdatedAt(Date.now()); }
+    });
   }, [loaded]);
+
+  // Whenever the USD rate actually changes, re-price every account pinned to a dollar amount
+  // and log the resulting swing as a "Курсовая разница" analytics event — not on the very first
+  // load, since that's just establishing the baseline, not a real change.
+  useEffect(() => {
+    if (!loaded || !usdRate) return;
+    const prevRate = lastAppliedUsdRateRef.current;
+    lastAppliedUsdRateRef.current = usdRate;
+    if (prevRate == null || prevRate === usdRate) return;
+
+    const fxEvents = [];
+    setAccounts(prev => prev.map(a => {
+      if (a.usdAmount == null) return a;
+      const newBalance = Math.round(Number(a.usdAmount) * usdRate * 100) / 100;
+      const delta = Math.round((newBalance - a.balance) * 100) / 100;
+      if (Math.abs(delta) < 0.01) return a;
+      fxEvents.push({ id: uid(), accountId: a.id, delta, kind: 'fx', date: todayISO(), createdAt: Date.now() });
+      return { ...a, balance: newBalance };
+    }));
+    if (fxEvents.length > 0) {
+      setBalanceAdjustments(prev => [...prev, ...fxEvents]);
+    }
+  }, [usdRate, loaded]);
 
   useEffect(() => {
     const prev = prevGoalsRef.current;
@@ -722,6 +787,8 @@ export default function BudgetApp() {
     [limits, spentByCategory]
   );
 
+  const analyticsPeriodStart = useMemo(() => dateToISO(periodStartDate(analyticsPeriod)), [analyticsPeriod]);
+
   const capitalCandles = useMemo(() => {
     const events = [
       ...transactions.map(t => ({ date: t.date, createdAt: t.createdAt, delta: t.type === 'income' ? t.amount : -t.amount })),
@@ -731,10 +798,10 @@ export default function BudgetApp() {
     const netAll = events.reduce((s, e) => s + e.delta, 0);
     const historyStart = totalBalance - netAll;
 
+    const startD = periodStartDate(analyticsPeriod);
     const today = new Date();
-    const year = today.getFullYear(), month = today.getMonth();
-    const todayDay = today.getDate();
-    const monthStartStr = `${year}-${String(month + 1).padStart(2, '0')}-01`;
+    const totalDays = Math.max(1, Math.round((new Date(today.getFullYear(), today.getMonth(), today.getDate()) - startD) / 86400000) + 1);
+    const startStr = dateToISO(startD);
 
     const byDate = {};
     events.forEach(e => {
@@ -743,11 +810,13 @@ export default function BudgetApp() {
     });
 
     let running = historyStart;
-    events.forEach(e => { if (e.date < monthStartStr) running += e.delta; });
+    events.forEach(e => { if (e.date < startStr) running += e.delta; });
 
     const result = [];
-    for (let d = 1; d <= todayDay; d++) {
-      const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    for (let i = 0; i < totalDays; i++) {
+      const d = new Date(startD);
+      d.setDate(startD.getDate() + i);
+      const dateStr = dateToISO(d);
       const open = running;
       let high = open, low = open, close = open;
       (byDate[dateStr] || []).forEach(e => {
@@ -761,27 +830,27 @@ export default function BudgetApp() {
       result.push({
         date: dateStr, open, high, low, close,
         range: [Math.round(low * 100) / 100, Math.round(high * 100) / 100],
-        label: new Date(dateStr + 'T00:00:00').toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }),
+        label: d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }),
       });
     }
     return result;
-  }, [transactions, balanceAdjustments, totalBalance]);
+  }, [transactions, balanceAdjustments, totalBalance, analyticsPeriod]);
 
   const accountFlowThisMonth = useMemo(() => {
     const map = {};
     accounts.forEach(a => { map[a.id] = { account: a, plus: 0, minus: 0 }; });
-    transactions.filter(t => t.date.slice(0, 7) === monthKey).forEach(t => {
+    transactions.filter(t => t.date >= analyticsPeriodStart).forEach(t => {
       if (!map[t.accountId]) return;
       if (t.type === 'income') map[t.accountId].plus += t.amount;
       else map[t.accountId].minus += t.amount;
     });
-    balanceAdjustments.filter(a => a.date.slice(0, 7) === monthKey).forEach(a => {
+    balanceAdjustments.filter(a => a.date >= analyticsPeriodStart).forEach(a => {
       if (!map[a.accountId]) return;
       if (a.delta > 0) map[a.accountId].plus += a.delta;
       else map[a.accountId].minus += -a.delta;
     });
     return Object.values(map).filter(x => x.plus > 0 || x.minus > 0);
-  }, [accounts, transactions, balanceAdjustments, monthKey]);
+  }, [accounts, transactions, balanceAdjustments, analyticsPeriodStart]);
 
   const daysUntilReset = useMemo(() => {
     const today = new Date();
@@ -791,24 +860,33 @@ export default function BudgetApp() {
 
   const categoryData = useMemo(() => {
     const map = {};
-    transactions.filter(t => t.type === 'expense').forEach(t => {
+    transactions.filter(t => t.type === 'expense' && t.date >= analyticsPeriodStart).forEach(t => {
       const cat = resolveCategory(t.category);
       if (!map[cat.id]) map[cat.id] = { label: cat.label, value: 0, color: cat.color };
       map[cat.id].value += t.amount;
     });
     return Object.values(map).sort((a, b) => b.value - a.value).slice(0, 6);
-  }, [transactions, allCategoriesFull]);
+  }, [transactions, analyticsPeriodStart, allCategoriesFull]);
 
   const capitalFactors = useMemo(() => {
-    const monthTx = transactions.filter(t => t.date.slice(0, 7) === monthKey);
+    const periodTx = transactions.filter(t => t.date >= analyticsPeriodStart);
+    const periodAdj = balanceAdjustments.filter(a => a.date >= analyticsPeriodStart);
     const incomeMap = {}, expenseMap = {};
     let totalIncome = 0, totalExpense = 0;
-    monthTx.forEach(t => {
+    periodTx.forEach(t => {
       const cat = resolveCategory(t.category);
       const map = t.type === 'income' ? incomeMap : expenseMap;
       if (!map[cat.id]) map[cat.id] = { label: cat.label, color: cat.color, icon: cat.icon, value: 0 };
       map[cat.id].value += t.amount;
       if (t.type === 'income') totalIncome += t.amount; else totalExpense += t.amount;
+    });
+    periodAdj.forEach(a => {
+      const cat = a.kind === 'fx' ? FX_CATEGORY : ADJUSTMENT_CATEGORY;
+      const map = a.delta >= 0 ? incomeMap : expenseMap;
+      const amt = Math.abs(a.delta);
+      if (!map[cat.id]) map[cat.id] = { label: cat.label, color: cat.color, icon: cat.icon, value: 0 };
+      map[cat.id].value += amt;
+      if (a.delta >= 0) totalIncome += amt; else totalExpense += amt;
     });
     const toList = (map, total) => Object.values(map)
       .sort((a, b) => b.value - a.value)
@@ -817,7 +895,7 @@ export default function BudgetApp() {
       totalIncome, totalExpense, net: totalIncome - totalExpense,
       income: toList(incomeMap, totalIncome), expense: toList(expenseMap, totalExpense),
     };
-  }, [transactions, monthKey, allCategoriesFull]);
+  }, [transactions, balanceAdjustments, analyticsPeriodStart, allCategoriesFull]);
 
   const limitsSavings = useMemo(() => {
     let saved = 0, overspent = 0;
@@ -837,7 +915,7 @@ export default function BudgetApp() {
     const combined = [
       ...transactions.map(t => ({ ...t, kind: 'tx' })),
       ...balanceAdjustments.map(a => ({
-        id: a.id, kind: 'adjustment', accountId: a.accountId, amount: Math.abs(a.delta),
+        id: a.id, kind: a.kind === 'fx' ? 'fx' : 'adjustment', accountId: a.accountId, amount: Math.abs(a.delta),
         type: a.delta >= 0 ? 'income' : 'expense', date: a.date, createdAt: a.createdAt, note: '',
       })),
     ];
@@ -853,8 +931,11 @@ export default function BudgetApp() {
     return groups;
   }, [transactions, balanceAdjustments, transfers]);
 
-  function addAccount({ name, type, balance, photo }) {
-    setAccounts(prev => [...prev, { id: uid(), name, type, balance: Number(balance) || 0, photo: photo || null }]);
+  function addAccount({ name, type, balance, photo, usdAmount }) {
+    setAccounts(prev => [...prev, {
+      id: uid(), name, type, balance: Number(balance) || 0, photo: photo || null,
+      usdAmount: usdAmount != null && usdAmount !== '' ? Number(usdAmount) : null,
+    }]);
   }
   function deleteAccount(id) {
     setAccounts(prev => prev.filter(a => a.id !== id));
@@ -989,7 +1070,11 @@ export default function BudgetApp() {
     const acc = accounts.find(a => a.id === id);
     const newBalance = patch.balance !== undefined ? (Number(patch.balance) || 0) : (acc ? acc.balance : 0);
     const delta = acc ? newBalance - acc.balance : 0;
-    setAccounts(prev => prev.map(a => a.id === id ? { ...a, ...patch, balance: newBalance } : a));
+    const normalizedPatch = { ...patch, balance: newBalance };
+    if ('usdAmount' in patch) {
+      normalizedPatch.usdAmount = patch.usdAmount != null && patch.usdAmount !== '' ? Number(patch.usdAmount) : null;
+    }
+    setAccounts(prev => prev.map(a => a.id === id ? { ...a, ...normalizedPatch } : a));
     if (delta !== 0) {
       setBalanceAdjustments(prev => [...prev, { id: uid(), accountId: id, delta, date: todayISO(), createdAt: Date.now() }]);
     }
@@ -1193,12 +1278,12 @@ export default function BudgetApp() {
                           {groupedTransactions[0].items.slice(0, 4).map((t, i) => (
                             <TransactionRow
                               key={t.id} tx={t}
-                              category={t.kind === 'adjustment' ? ADJUSTMENT_CATEGORY : t.kind === 'transfer' ? TRANSFER_CATEGORY : resolveCategory(t.category)}
+                              category={t.kind === 'adjustment' ? ADJUSTMENT_CATEGORY : t.kind === 'fx' ? FX_CATEGORY : t.kind === 'transfer' ? TRANSFER_CATEGORY : resolveCategory(t.category)}
                               delay={i * 30}
                               account={accounts.find(a => a.id === t.accountId)}
                               toAccount={t.kind === 'transfer' ? accounts.find(a => a.id === t.toAccountId) : undefined}
-                              onDelete={() => t.kind === 'adjustment' ? deleteBalanceAdjustment(t.id) : t.kind === 'transfer' ? deleteTransfer(t.id) : deleteTransaction(t)}
-                              onEdit={t.kind === 'adjustment' || t.kind === 'transfer' || t.category === 'goal' ? undefined : () => setEditTxId(t.id)}
+                              onDelete={() => t.kind === 'adjustment' || t.kind === 'fx' ? deleteBalanceAdjustment(t.id) : t.kind === 'transfer' ? deleteTransfer(t.id) : deleteTransaction(t)}
+                              onEdit={t.kind === 'adjustment' || t.kind === 'fx' || t.kind === 'transfer' || t.category === 'goal' ? undefined : () => setEditTxId(t.id)}
                             />
                           ))}
                         </div>
@@ -1260,8 +1345,8 @@ export default function BudgetApp() {
                         delay={i * 30}
                         account={accounts.find(a => a.id === t.accountId)}
                         toAccount={t.kind === 'transfer' ? accounts.find(a => a.id === t.toAccountId) : undefined}
-                        onDelete={() => t.kind === 'adjustment' ? deleteBalanceAdjustment(t.id) : t.kind === 'transfer' ? deleteTransfer(t.id) : deleteTransaction(t)}
-                        onEdit={t.kind === 'adjustment' || t.kind === 'transfer' || t.category === 'goal' ? undefined : () => setEditTxId(t.id)}
+                        onDelete={() => t.kind === 'adjustment' || t.kind === 'fx' ? deleteBalanceAdjustment(t.id) : t.kind === 'transfer' ? deleteTransfer(t.id) : deleteTransaction(t)}
+                        onEdit={t.kind === 'adjustment' || t.kind === 'fx' || t.kind === 'transfer' || t.category === 'goal' ? undefined : () => setEditTxId(t.id)}
                       />
                       ))}
                     </div>
@@ -1392,11 +1477,30 @@ export default function BudgetApp() {
                 <EmptyRow text="Появится, как только будут операции" />
               ) : (
                 <div style={{ padding: '4px 20px 8px' }}>
+                  <div className="no-scrollbar" style={{ display: 'flex', gap: 8, overflowX: 'auto', marginBottom: 12, paddingBottom: 2 }}>
+                    {ANALYTICS_PERIODS.map(p => {
+                      const active = analyticsPeriod === p.id;
+                      return (
+                        <button
+                          key={p.id} className="tap-scale" type="button" onClick={() => setAnalyticsPeriod(p.id)}
+                          style={{
+                            flexShrink: 0, padding: '8px 14px', borderRadius: 999, cursor: 'pointer',
+                            border: `1px solid ${active ? THEME.blueSoft : THEME.border}`,
+                            background: active ? 'rgba(61,127,255,0.15)' : THEME.surface2,
+                            color: active ? THEME.text : THEME.muted, fontSize: 12.5, fontFamily: 'Inter, sans-serif', fontWeight: active ? 600 : 400,
+                          }}
+                        >
+                          {p.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+
                   <ChartCard title="Общий капитал">
                     <CapitalCandleChart data={capitalCandles} />
                   </ChartCard>
 
-                  <CapitalFactorsCard data={capitalFactors} monthLabel={new Date(monthKey + '-01').toLocaleDateString('ru-RU', { month: 'long' })} />
+                  <CapitalFactorsCard data={capitalFactors} monthLabel={ANALYTICS_PERIODS.find(p => p.id === analyticsPeriod)?.label.toLowerCase()} />
 
                   <AccountFlowCard data={accountFlowThisMonth} />
 
@@ -1471,7 +1575,7 @@ export default function BudgetApp() {
         {modal === 'choose' && (
           <ActionChoiceModal onClose={() => setModal(null)} onChoose={handleChooseAction} />
         )}
-        {modal === 'account' && <AccountModal onClose={() => setModal(null)} onSubmit={addAccount} usdRate={usdRate} />}
+        {modal === 'account' && <AccountModal onClose={() => setModal(null)} onSubmit={addAccount} usdRate={usdRate} usdRateUpdatedAt={usdRateUpdatedAt} />}
         {modal === 'goal' && <GoalModal onClose={() => setModal(null)} onSubmit={addGoal} />}
         {(modal === 'income' || modal === 'expense') && (
           <TxModal
@@ -1560,7 +1664,7 @@ export default function BudgetApp() {
         {editAccountId && (
           <EditAccountModal
             account={accounts.find(a => a.id === editAccountId)}
-            usdRate={usdRate}
+            usdRate={usdRate} usdRateUpdatedAt={usdRateUpdatedAt}
             onClose={() => setEditAccountId(null)}
             onSave={(patch) => updateAccount(editAccountId, patch)}
             onDelete={() => { deleteAccount(editAccountId); setEditAccountId(null); }}
@@ -2186,6 +2290,9 @@ function AccountCard({ account, onEdit, delay = 0 }) {
       </div>
       <div style={{ textAlign: 'right' }}>
         <div style={{ color: THEME.text, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: 17 }}>{fmt(account.balance)}</div>
+        {account.usdAmount != null && (
+          <div style={{ color: THEME.cyan, fontSize: 10.5, fontFamily: 'Inter, sans-serif', marginTop: 1 }}>${account.usdAmount}</div>
+        )}
       </div>
       <button className="tap-scale" onClick={onEdit} style={{ background: 'none', border: 'none', cursor: 'pointer', color: THEME.mutedDim, padding: 4 }}>
         <PencilLine size={15} />
@@ -2975,21 +3082,43 @@ function MiniCalculatorModal({ initialValue, onApply, onClose }) {
   );
 }
 
-function FxAmountField({ value, onChange, usdRate, placeholder = '0' }) {
-  const [usdMode, setUsdMode] = useState(false);
-  const [usdValue, setUsdValue] = useState('');
+function FxAmountField({ value, onChange, usdRate, placeholder = '0', usdAmount, onUsdAmountChange, usdRateUpdatedAt }) {
+  const pinnable = onUsdAmountChange !== undefined;
+  const [usdMode, setUsdMode] = useState(pinnable && usdAmount != null);
+  const [usdValue, setUsdValue] = useState(pinnable && usdAmount != null ? String(usdAmount) : '');
   const [calcOpen, setCalcOpen] = useState(false);
 
   const handleUsdChange = (v) => {
     setUsdValue(v);
+    if (pinnable) onUsdAmountChange(v === '' ? null : v);
     if (usdRate && v) onChange(String(Math.round(Number(v) * usdRate * 100) / 100));
     else onChange('');
   };
 
   const toggleUsd = () => {
-    setUsdMode(v => !v);
-    setUsdValue('');
-    onChange('');
+    if (usdMode) {
+      // turning off: for a pinnable field (account balance) keep the last computed RUB value —
+      // don't wipe out the balance just because the user un-pinned it from the dollar rate.
+      setUsdMode(false);
+      setUsdValue('');
+      if (pinnable) onUsdAmountChange(null);
+      else onChange('');
+      return;
+    }
+    // turning on: seed the dollar figure from whatever RUB amount is already there, so pinning
+    // an existing balance to the rate doesn't lose the number.
+    let seed = '';
+    if (pinnable && usdRate && Number(value)) {
+      seed = String(Math.round((Number(value) / usdRate) * 100) / 100);
+    }
+    setUsdValue(seed);
+    setUsdMode(true);
+    if (pinnable) {
+      onUsdAmountChange(seed === '' ? null : seed);
+      if (seed) onChange(String(Math.round(Number(seed) * usdRate * 100) / 100));
+    } else {
+      onChange('');
+    }
   };
 
   const utilBtnStyle = (active) => ({
@@ -3015,9 +3144,11 @@ function FxAmountField({ value, onChange, usdRate, placeholder = '0' }) {
         >
           {usdMode ? '₽' : '$'}
         </button>
-        <button type="button" className="tap-scale" onClick={() => setCalcOpen(true)} style={utilBtnStyle(false)}>
-          <Calculator size={17} />
-        </button>
+        {!pinnable && (
+          <button type="button" className="tap-scale" onClick={() => setCalcOpen(true)} style={utilBtnStyle(false)}>
+            <Calculator size={17} />
+          </button>
+        )}
       </div>
       {usdMode && (
         <div style={{
@@ -3030,8 +3161,14 @@ function FxAmountField({ value, onChange, usdRate, placeholder = '0' }) {
                 Введено: ${usdValue || 0}
               </div>
               <div style={{ color: THEME.muted, fontSize: 11.5, fontFamily: 'Inter, sans-serif', marginTop: 3 }}>
-                Будет сохранено: {fmt(Math.round(Number(usdValue || 0) * usdRate))} · курс ЦБ {usdRate.toFixed(2)} ₽/$
+                {pinnable ? 'Сейчас' : 'Будет сохранено'}: {fmt(Math.round(Number(usdValue || 0) * usdRate))} · курс ЦБ {usdRate.toFixed(2)} ₽/$
+                {pinnable && usdRateUpdatedAt ? ` · обновлён ${formatRelativeTime(usdRateUpdatedAt)}` : ''}
               </div>
+              {pinnable && (
+                <div style={{ color: THEME.mutedDim, fontSize: 10.5, fontFamily: 'Inter, sans-serif', marginTop: 3 }}>
+                  Сумма в рублях будет сама обновляться при изменении курса
+                </div>
+              )}
             </>
           ) : (
             <div style={{ color: THEME.red, fontSize: 12, fontFamily: 'Inter, sans-serif' }}>Курс доллара недоступен</div>
@@ -3082,12 +3219,13 @@ function PhotoPicker({ photo, onChange }) {
   );
 }
 
-function AccountModal({ onClose, onSubmit, usdRate }) {
+function AccountModal({ onClose, onSubmit, usdRate, usdRateUpdatedAt }) {
   const [name, setName] = useState('');
   const [type, setType] = useState('card');
   const [balance, setBalance] = useState('');
+  const [usdAmount, setUsdAmount] = useState(null);
   const [photo, setPhoto] = useState(null);
-  const submit = () => { if (!name.trim()) return; onSubmit({ name: name.trim(), type, balance, photo }); onClose(); };
+  const submit = () => { if (!name.trim()) return; onSubmit({ name: name.trim(), type, balance, photo, usdAmount }); onClose(); };
   return (
     <ModalShell title="Новый счёт" onClose={onClose}>
       <label style={fieldLabel()}>Название</label>
@@ -3111,7 +3249,10 @@ function AccountModal({ onClose, onSubmit, usdRate }) {
         })}
       </div>
       <label style={{ ...fieldLabel(), marginTop: 14 }}>Начальный баланс</label>
-      <FxAmountField value={balance} onChange={setBalance} usdRate={usdRate} />
+      <FxAmountField
+        value={balance} onChange={setBalance} usdRate={usdRate}
+        usdAmount={usdAmount} onUsdAmountChange={setUsdAmount} usdRateUpdatedAt={usdRateUpdatedAt}
+      />
       <label style={{ ...fieldLabel(), marginTop: 14 }}>Фото счёта (необязательно)</label>
       <PhotoPicker photo={photo} onChange={setPhoto} />
       <button className="tap-scale" style={submitBtn()} onClick={submit}>Добавить счёт</button>
@@ -4210,14 +4351,15 @@ function RecurringForm({ accounts, categories, initial, onSubmit }) {
   );
 }
 
-function EditAccountModal({ account, onClose, onSave, onDelete, usdRate }) {
+function EditAccountModal({ account, onClose, onSave, onDelete, usdRate, usdRateUpdatedAt }) {
   const [name, setName] = useState(account ? account.name : '');
   const [type, setType] = useState(account ? account.type : 'card');
   const [balance, setBalance] = useState(account ? String(account.balance) : '');
+  const [usdAmount, setUsdAmount] = useState(account && account.usdAmount != null ? account.usdAmount : null);
   const [photo, setPhoto] = useState(account ? account.photo || null : null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   if (!account) return null;
-  const submit = () => { if (!name.trim()) return; onSave({ name: name.trim(), type, balance, photo }); onClose(); };
+  const submit = () => { if (!name.trim()) return; onSave({ name: name.trim(), type, balance, photo, usdAmount }); onClose(); };
   return (
     <ModalShell title="Изменить счёт" onClose={onClose}>
       <label style={fieldLabel()}>Название</label>
@@ -4241,7 +4383,10 @@ function EditAccountModal({ account, onClose, onSave, onDelete, usdRate }) {
         })}
       </div>
       <label style={{ ...fieldLabel(), marginTop: 14 }}>Баланс</label>
-      <FxAmountField value={balance} onChange={setBalance} usdRate={usdRate} />
+      <FxAmountField
+        value={balance} onChange={setBalance} usdRate={usdRate}
+        usdAmount={usdAmount} onUsdAmountChange={setUsdAmount} usdRateUpdatedAt={usdRateUpdatedAt}
+      />
       <label style={{ ...fieldLabel(), marginTop: 14 }}>Фото счёта (необязательно)</label>
       <PhotoPicker photo={photo} onChange={setPhoto} />
       <button className="tap-scale" style={submitBtn()} onClick={submit}>Сохранить</button>
