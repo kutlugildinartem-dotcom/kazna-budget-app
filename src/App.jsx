@@ -45,7 +45,7 @@ async function downloadAndInstallUpdate(url) {
   await InstallApk.install({ path: uri.replace(/^file:\/\//, '') });
 }
 
-const APP_VERSION = '1.19.0';
+const APP_VERSION = '1.19.1';
 const UPDATE_REPO = 'kutlugildinartem-dotcom/kazna-budget-app';
 
 function isVersionNewer(latest, current) {
@@ -1147,14 +1147,7 @@ export default function BudgetApp() {
   }, [barItemIds, loaded]);
 
   if (!loaded) {
-    return (
-      <div style={styles.appOuter}>
-        <style>{getFontStyle()}</style>
-        <div style={{ ...styles.phone, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ color: THEME.muted, fontFamily: 'Inter, sans-serif' }}>Загрузка…</div>
-        </div>
-      </div>
-    );
+    return <div style={{ position: 'fixed', inset: 0, background: '#050308' }} />;
   }
 
   const visibleTabs = [homeTab, ...ALL_NAV_SECTIONS.filter(s => barItemIds.includes(s.id))];
